@@ -153,6 +153,16 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.viewed":
+    case "thread.marked-unread":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          viewedAt: event.payload.viewedAt,
+        },
+      };
+
     case "thread.snoozed":
       return {
         kind: "updated",
