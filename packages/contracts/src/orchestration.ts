@@ -1154,8 +1154,6 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unarchived",
   "thread.settled",
   "thread.unsettled",
-  "thread.viewed",
-  "thread.marked-unread",
   "thread.snoozed",
   "thread.unsnoozed",
   "thread.pinned",
@@ -1256,16 +1254,6 @@ export const ThreadUnsettledPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
-export const ThreadViewedPayload = Schema.Struct({
-  threadId: ThreadId,
-  viewedAt: IsoDateTime,
-});
-
-export const ThreadMarkedUnreadPayload = Schema.Struct({
-  threadId: ThreadId,
-  viewedAt: IsoDateTime,
-});
-
 export const ThreadSnoozedPayload = Schema.Struct({
   threadId: ThreadId,
   snoozedUntil: IsoDateTime,
@@ -1317,6 +1305,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  viewedAt: Schema.optional(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 
@@ -1500,16 +1489,6 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unsettled"),
     payload: ThreadUnsettledPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("thread.viewed"),
-    payload: ThreadViewedPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("thread.marked-unread"),
-    payload: ThreadMarkedUnreadPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

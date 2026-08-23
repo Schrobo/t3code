@@ -125,8 +125,8 @@ it.effect("projects settled lifecycle events", () =>
       woke,
       makeEvent({
         sequence: 7,
-        type: "thread.viewed",
-        payload: { threadId: ThreadId.make("thread-1"), viewedAt },
+        type: "thread.meta-updated",
+        payload: { threadId: ThreadId.make("thread-1"), viewedAt, updatedAt: now },
       }),
     );
     expect(viewed.threads[0]?.viewedAt).toBe(viewedAt);
@@ -137,8 +137,8 @@ it.effect("projects settled lifecycle events", () =>
       viewed,
       makeEvent({
         sequence: 8,
-        type: "thread.marked-unread",
-        payload: { threadId: ThreadId.make("thread-1"), viewedAt: markedUnreadAt },
+        type: "thread.meta-updated",
+        payload: { threadId: ThreadId.make("thread-1"), viewedAt: markedUnreadAt, updatedAt: now },
       }),
     );
     expect(markedUnread.threads[0]?.viewedAt).toBe(markedUnreadAt);
