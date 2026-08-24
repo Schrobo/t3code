@@ -17,6 +17,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  createVisibleThreadAcknowledger,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -85,6 +86,39 @@ describe("artifact template composer insertion", () => {
     const prompt = "Create a document using this $artifact-template-hello-world about…";
 
     expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
+  });
+});
+
+describe("createVisibleThreadAcknowledger", () => {
+  it("does not clear an explicit unread marker when the same thread regains focus", () => {
+    const acknowledge = vi.fn();
+    const acknowledgeVisibleThread = createVisibleThreadAcknowledger({
+      isVisible: () => true,
+      acknowledge,
+    });
+
+    acknowledgeVisibleThread();
+    acknowledgeVisibleThread();
+
+    expect(acknowledge).toHaveBeenCalledOnce();
+  });
+
+  it("waits until a background thread is visible before acknowledging it", () => {
+    const acknowledge = vi.fn();
+    let visible = false;
+    const acknowledgeVisibleThread = createVisibleThreadAcknowledger({
+      isVisible: () => visible,
+      acknowledge,
+    });
+
+    acknowledgeVisibleThread();
+    expect(acknowledge).not.toHaveBeenCalled();
+
+    visible = true;
+    acknowledgeVisibleThread();
+    acknowledgeVisibleThread();
+
+    expect(acknowledge).toHaveBeenCalledOnce();
   });
 });
 
