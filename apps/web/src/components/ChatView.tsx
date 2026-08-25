@@ -354,6 +354,7 @@ import {
   scheduleEnvironmentReconnectWarning,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  shouldAcknowledgeVisibleThreadCompletion,
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
@@ -1822,6 +1823,11 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
+  const acknowledgedVisibleThreadRef = useRef<{
+    threadKey: string;
+    completedAt: string;
+    serverSupportsViewState: boolean;
+  } | null>(null);
   // Reading a finished thread clears the sidebar's Done badge. The visit is
   // stamped at the turn's completion time — not now/updatedAt — so it clears
   // exactly the completion the user is looking at: a wake or completion that
@@ -1829,11 +1835,36 @@ function ChatViewContent(props: ChatViewProps) {
   // timestamp backwards).
   useEffect(() => {
     const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    if (!serverThread?.id || !completedAt) {
+      acknowledgedVisibleThreadRef.current = null;
+      return;
+    }
     const threadRef = scopeThreadRef(serverThread.environmentId, serverThread.id);
+    const threadKey = scopedThreadKey(threadRef);
     const acknowledgeVisibleThread = createVisibleThreadAcknowledger({
       isVisible: () => document.visibilityState === "visible" && document.hasFocus(),
-      acknowledge: () => markViewed(threadRef, completedAt, supportsThreadViewState),
+      acknowledge: () => {
+        const { threadLastVisitedAtById, threadViewStatePendingById } = useUiStateStore.getState();
+        if (
+          !shouldAcknowledgeVisibleThreadCompletion({
+            previousAcknowledgement: acknowledgedVisibleThreadRef.current,
+            threadKey,
+            completedAt,
+            serverSupportsViewState: supportsThreadViewState,
+            localViewedAt: threadLastVisitedAtById[threadKey],
+            pendingUnread: threadViewStatePendingById[threadKey]?.kind === "unread",
+          })
+        ) {
+          return;
+        }
+
+        acknowledgedVisibleThreadRef.current = {
+          threadKey,
+          completedAt,
+          serverSupportsViewState: supportsThreadViewState,
+        };
+        markViewed(threadRef, completedAt, supportsThreadViewState);
+      },
     });
 
     acknowledgeVisibleThread();
