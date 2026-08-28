@@ -1,4 +1,5 @@
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -10,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { toastManager } from "../components/ui/toast";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
@@ -23,14 +25,11 @@ export function useManagedRelayEnvironmentRemoval() {
   const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
-  const currentAccountIdRef = useRef(environmentsState.accountId);
   const pendingRef = useRef(false);
   const [confirmingEnvironmentId, setConfirmingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
   const [pendingEnvironmentId, setPendingEnvironmentId] = useState<EnvironmentId | null>(null);
-  currentAccountIdRef.current = environmentsState.accountId;
-
   useEffect(() => {
     setConfirmingEnvironmentId(null);
   }, [environmentsState.accountId]);
@@ -48,7 +47,7 @@ export function useManagedRelayEnvironmentRemoval() {
     pendingRef.current = false;
     setPendingEnvironmentId(null);
 
-    if (currentAccountIdRef.current !== accountId) return;
+    if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
     if (result._tag === "Success") {
       setConfirmingEnvironmentId(null);
       environmentsState.refresh();

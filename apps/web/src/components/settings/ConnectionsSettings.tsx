@@ -29,6 +29,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1746,6 +1747,7 @@ function CloudRemoteEnvironmentRows({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
+  const managedRelaySession = useAtomValue(managedRelaySessionAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -3381,7 +3383,7 @@ export function ConnectionsSettings() {
         </SettingsSection>
       )}
 
-      {hasCloudPublicConfig() ? (
+      {hasCloudPublicConfig() && managedRelaySession ? (
         <SettingsSection title="T3 Connect account">
           <ManagedRelayEnvironmentRows />
         </SettingsSection>
