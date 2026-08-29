@@ -18,6 +18,7 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  readonly requiresThreadAutoSettlement?: boolean;
 }
 
 /**
@@ -115,11 +116,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
+    requiresThreadAutoSettlement: true,
   },
   {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/general",
+    requiresThreadAutoSettlement: true,
   },
   {
     id: "time-format",
@@ -291,6 +294,7 @@ function normalizeSearchText(value: string): string {
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
+  capabilities: { readonly threadAutoSettlement?: boolean } = {},
 ): ReadonlyArray<SettingsSearchItem> {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
@@ -298,6 +302,7 @@ export function searchSettings(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (item.requiresThreadAutoSettlement !== true || capabilities.threadAutoSettlement === true) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

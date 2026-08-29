@@ -20,7 +20,9 @@ import {
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 
+import { primaryServerConfigAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -78,7 +80,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const supportsAutoSettlement =
+    useAtomValue(primaryServerConfigAtom)?.environment.capabilities.threadAutoSettlement === true;
+  const results = useMemo(
+    () => searchSettings(query, undefined, { threadAutoSettlement: supportsAutoSettlement }),
+    [query, supportsAutoSettlement],
+  );
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 

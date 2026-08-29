@@ -70,8 +70,34 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
-    expect(searchSettings("quit confirmation")).toEqual([]);
+    expect(searchSettings("hold to quit")).toEqual([]);
+    expect(searchSettings("hold to quit", undefined, { threadAutoSettlement: true })).toEqual([]);
   });
+
+  it("hides automatic settlement settings when the capability is missing or disabled", () => {
+    expect(searchSettings("auto-settle")).toEqual([]);
+    expect(searchSettings("auto-settle", undefined, { threadAutoSettlement: false })).toEqual([]);
+  });
+
+  it("shows automatic settlement settings when the server supports them", () => {
+    expect(
+      searchSettings("auto-settle", undefined, { threadAutoSettlement: true }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["auto-settle-inactive-threads", "auto-settle-merged-threads"]);
+  });
+
+  it.each([false, true])(
+    "keeps unrelated results with threadAutoSettlement set to %s",
+    (threadAutoSettlement) => {
+      expect(
+        searchSettings("update", ITEMS, { threadAutoSettlement }).map((item) => item.id),
+      ).toEqual(["provider-updates", "automatic-updates"]);
+      expect(
+        searchSettings("glass", undefined, { threadAutoSettlement }).map((item) => item.id),
+      ).toEqual(["setting-glass-opacity"]);
+    },
+  );
 
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
