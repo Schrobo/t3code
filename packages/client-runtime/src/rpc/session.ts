@@ -19,6 +19,7 @@ import {
   ConnectionBlockedError,
   ConnectionTransientError as ConnectionTransientErrorClass,
 } from "../connection/model.ts";
+import { environmentMismatchError } from "../connection/errors.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -117,6 +118,14 @@ export const make = Effect.gen(function* () {
     const initialConfig = yield* Effect.cached(
       client[WS_METHODS.serverGetConfig]({}).pipe(
         Effect.mapError(mapSessionRpcError),
+        Effect.flatMap((config) =>
+          config.environment.environmentId === connection.environmentId
+            ? Effect.succeed(config)
+            : environmentMismatchError({
+                expected: connection.environmentId,
+                actual: config.environment.environmentId,
+              }),
+        ),
         Effect.withSpan("environment.initialSync"),
       ),
     );

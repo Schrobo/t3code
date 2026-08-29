@@ -37,6 +37,56 @@ browser session cookie. The cookie is an HTTP transport adapter for the same
 scoped session model; the response never exposes the session secret to browser
 JavaScript.
 
+### Reusable dev credential
+
+Web development servers with a Vite dev URL can read `T3CODE_DEV_AUTH_TOKEN`.
+The value must contain at least 32 characters after trimming. Generate one
+random value, then supply that same value to each worktree that should accept
+it. Do not generate a new value in every shell startup.
+
+Generate the value once:
+
+```bash
+openssl rand -hex 32
+```
+
+Then copy that output and use the same value in every worktree shell:
+
+```bash
+export T3CODE_DEV_AUTH_TOKEN="<the value generated above>"
+vp run dev --share
+```
+
+Each worktree hashes the value and seeds one administrative session in its own
+`state.sqlite`. The raw value is not stored in SQLite. Worktrees do not share an
+authentication database, signing key, environment ID, session records, pairing grant,
+or revocation state. Normal browser, bearer, DPoP, and WebSocket credentials
+remain local to the environment that issued them.
+
+Cookies do not include a port. The dedicated dev cookie therefore lets one
+browser reuse the configured credential across worktrees on the same hostname
+and different ports. If an old tab URL now reaches a replacement environment,
+the client rejects the unexpected environment ID. Reload the tab to discover
+and connect to the replacement environment.
+
+The configured credential has no ordinary 30-day session lifetime. Its browser
+cookie expires after 30 days, so pairing can be required again without disabling
+the configured credential. The startup pairing URL contains this reusable
+credential and must be handled as a secret.
+
+Revoking the seeded session disables the credential in that worktree and stays
+in effect after restart. Other worktrees remain active. Remove or rotate the env
+value and restart to disable the old reusable credential and its outstanding
+WebSocket tickets. Normal OAuth child sessions keep their ordinary expiry and
+revocation rules. A revoked worktree uses a normal one-time startup credential so an
+administrator can recover access. Desktop and non-development servers ignore
+the env value.
+
+The reusable credential can bootstrap `/oauth/token`, but the endpoint always
+issues a normal local bearer or DPoP session. Requested scopes must still be a
+subset of the administrative grant. It never returns the reusable credential as
+an access token.
+
 ### Bearer Access Token
 
 Non-browser clients use `POST /oauth/token` with an
