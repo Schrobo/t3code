@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -552,11 +553,26 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
 
   it.effect("rejects outgoing messages after an approval response cannot be encoded", () =>
     Effect.gen(function* () {
-      const { stdio, input } = yield* makeInMemoryStdio();
+      const { stdio: baseStdio, input } = yield* makeInMemoryStdio();
       const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const readerStopped = yield* Deferred.make<void>();
+      let notificationCount = 0;
+      let requestCount = 0;
+      const stdio = Stdio.make({
+        args: baseStdio.args,
+        stdin: baseStdio.stdin.pipe(
+          Stream.ensuring(Deferred.succeed(readerStopped, undefined).pipe(Effect.asVoid)),
+        ),
+        stdout: baseStdio.stdout,
+        stderr: baseStdio.stderr,
+      });
       const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
         stdio,
-        onRequest: () => Effect.succeed({ invalid: 1n }),
+        onRequest: () =>
+          Effect.sync(() => ++requestCount).pipe(
+            Effect.map((count) => (count === 1 ? { invalid: 1n } : { ok: true })),
+          ),
+        onNotification: () => Effect.sync(() => notificationCount++).pipe(Effect.asVoid),
         onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
       });
 
@@ -576,6 +592,61 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       const notificationFailure = yield* transport.notify("initialized").pipe(Effect.flip);
       assert.strictEqual(requestFailure, failure);
       assert.strictEqual(notificationFailure, failure);
+      yield* Deferred.await(readerStopped);
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${[
+            encodeUnknownJsonString({ method: "x/late-notification" }),
+            encodeUnknownJsonString({ id: 8, method: "x/late-request" }),
+          ].join("\n")}\n`,
+        ),
+      );
+
+      assert.equal(notificationCount, 0);
+      assert.equal(requestCount, 1);
+      assert.equal(yield* Queue.size(input), 1);
+    }),
+  );
+
+  it.effect("fails pending requests before interrupted handler cleanup completes", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const handlerStarted = yield* Deferred.make<void>();
+      const finalizerStarted = yield* Deferred.make<void>();
+      const releaseFinalizer = yield* Deferred.make<void>();
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onRequest: () =>
+          Deferred.succeed(handlerStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() =>
+              Deferred.succeed(finalizerStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFinalizer)),
+              ),
+            ),
+          ),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(input, encodeJsonl({ id: 7, method: "x/approval" }));
+      yield* Deferred.await(handlerStarted);
+      yield* Queue.end(input);
+
+      const failure = yield* Deferred.await(terminated);
+      yield* Deferred.await(finalizerStarted);
+      const pendingFailure = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+      );
+      assert.strictEqual(pendingFailure, failure);
+
+      yield* Deferred.succeed(releaseFinalizer, undefined);
     }),
   );
 
