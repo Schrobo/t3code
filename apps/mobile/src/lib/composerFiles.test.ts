@@ -23,8 +23,6 @@ vi.mock("expo-file-system", () => {
   }
 
   class File {
-    static pickFileAsync = mocks.pickFile;
-
     readonly uri: string;
 
     constructor(source: string | Directory, name?: string) {
@@ -75,6 +73,7 @@ vi.mock("expo-file-system", () => {
 });
 
 vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
+vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("./uuid", () => ({ uuidv4: () => "attachment-id" }));
 
 import {
@@ -275,11 +274,11 @@ describe("composer file attachments", () => {
   it("copies picked files into app-owned storage without loading their contents", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/report.pdf",
           name: "report.pdf",
-          type: "application/pdf",
+          mimeType: "application/pdf",
           size: 42,
         },
       ],
@@ -304,14 +303,89 @@ describe("composer file attachments", () => {
     );
   });
 
+  it("preserves Android picker metadata instead of using the content URI document id", async () => {
+    const uri = "content://com.android.providers.media.documents/document/video%3A18";
+    mocks.pickFile.mockResolvedValue({
+      canceled: false,
+      assets: [
+        {
+          uri,
+          name: "preview-h264.mp4",
+          mimeType: "video/mp4",
+          size: 620_992,
+          lastModified: 0,
+        },
+      ],
+    });
+    mocks.size.mockReturnValue(620_992);
+
+    await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual({
+      files: [
+        {
+          id: "attachment-id",
+          type: "file",
+          name: "preview-h264.mp4",
+          mimeType: "video/mp4",
+          sizeBytes: 620_992,
+          fileUri: "file:///documents/t3-composer-attachments/attachment-id-preview-h264.mp4",
+        },
+      ],
+      error: null,
+    });
+    expect(mocks.pickFile).toHaveBeenCalledWith({ multiple: true, copyToCacheDirectory: false });
+    expect(mocks.copy).toHaveBeenCalledWith(
+      uri,
+      "file:///documents/t3-composer-attachments/attachment-id-preview-h264.mp4",
+    );
+    expect(mocks.delete).not.toHaveBeenCalled();
+  });
+
+  it("ends the foreground handoff when the picker is canceled without copying files", async () => {
+    mocks.pickFile.mockImplementation(async () => {
+      expect(isForegroundHandoffActive()).toBe(true);
+      return { canceled: true, assets: null };
+    });
+
+    await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual({
+      files: [],
+      error: null,
+    });
+
+    expect(isForegroundHandoffActive()).toBe(false);
+    expect(mocks.copy).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("reports picker failures and releases the foreground handoff", async () => {
+    mocks.pickFile.mockRejectedValue(new Error("The document provider is unavailable."));
+
+    await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual({
+      files: [],
+      error: "The document provider is unavailable.",
+    });
+
+    expect(isForegroundHandoffActive()).toBe(false);
+    expect(mocks.copy).not.toHaveBeenCalled();
+  });
+
+  it("does not open the picker when the draft has no remaining attachment slots", async () => {
+    await expect(pickComposerFiles({ existingCount: 8 })).resolves.toEqual({
+      files: [],
+      error: "You can attach up to 8 files per message.",
+    });
+
+    expect(mocks.pickFile).not.toHaveBeenCalled();
+    expect(isForegroundHandoffActive()).toBe(false);
+  });
+
   it("falls back to a usable name when the picker reports a blank one", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/unnamed",
           name: "   ",
-          type: "application/pdf",
+          mimeType: "application/pdf",
           size: 42,
         },
       ],
@@ -326,11 +400,11 @@ describe("composer file attachments", () => {
   it("rejects files that exceed the environment's advertised upload limit", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/archive.zip",
           name: "archive.zip",
-          type: "application/zip",
+          mimeType: "application/zip",
           size: 2 * 1024 * 1024,
         },
       ],
@@ -346,11 +420,11 @@ describe("composer file attachments", () => {
   it("never accepts files above the 50 MB contract limit", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/archive.zip",
           name: "archive.zip",
-          type: "application/zip",
+          mimeType: "application/zip",
           size: 51 * 1024 * 1024,
         },
       ],
@@ -367,11 +441,11 @@ describe("composer file attachments", () => {
   it("rejects a file that grew after the picker reported its size", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/archive.zip",
           name: "archive.zip",
-          type: "application/zip",
+          mimeType: "application/zip",
           size: 42,
         },
       ],
@@ -435,11 +509,11 @@ describe("composer file attachments", () => {
     mocks.size.mockReturnValue(0);
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/empty.txt",
           name: "empty.txt",
-          type: "text/plain",
+          mimeType: "text/plain",
           size: 0,
         },
       ],
@@ -451,7 +525,7 @@ describe("composer file attachments", () => {
     });
   });
 
-  it("copies an Android SAF file when the picker reports an unknown zero size", async () => {
+  it.each([0, undefined])("copies an Android SAF file when the picker size is %s", async (size) => {
     const reader = {
       readBytes: vi
         .fn()
@@ -464,12 +538,12 @@ describe("composer file attachments", () => {
     mocks.open.mockImplementation((uri: string) => (uri.startsWith("content:") ? reader : writer));
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "content://shared/report",
           name: "report.pdf",
-          type: "application/pdf",
-          size: 0,
+          mimeType: "application/pdf",
+          size,
         },
       ],
     });
@@ -492,17 +566,17 @@ describe("composer file attachments", () => {
   it("uses the remaining slot for the first valid file after an oversized selection", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      result: [
+      assets: [
         {
           uri: "file:///downloads/huge.zip",
           name: "huge.zip",
-          type: "application/zip",
+          mimeType: "application/zip",
           size: 2 * 1024 * 1024,
         },
         {
           uri: "file:///downloads/report.pdf",
           name: "report.pdf",
-          type: "application/pdf",
+          mimeType: "application/pdf",
           size: 42,
         },
       ],
