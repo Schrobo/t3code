@@ -129,6 +129,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlConnectionService from "./sourceControl/connections/SourceControlConnectionService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -586,6 +587,8 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const sourceControlConnections =
+        yield* SourceControlConnectionService.SourceControlConnectionService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
@@ -1988,6 +1991,40 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "source-control",
             },
+          ),
+        [WS_METHODS.sourceControlConnectionsList]: () =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsList,
+            sourceControlConnections.list.pipe(Effect.map((connections) => ({ connections }))),
+            { "rpc.aggregate": "source-control-connections" },
+          ),
+        [WS_METHODS.sourceControlConnectionsAdd]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsAdd,
+            sourceControlConnections.add(input).pipe(Effect.map((connection) => ({ connection }))),
+            { "rpc.aggregate": "source-control-connections" },
+          ),
+        [WS_METHODS.sourceControlConnectionsVerify]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsVerify,
+            sourceControlConnections
+              .verify(input.id)
+              .pipe(Effect.map((connection) => ({ connection }))),
+            { "rpc.aggregate": "source-control-connections" },
+          ),
+        [WS_METHODS.sourceControlConnectionsReplaceCredential]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsReplaceCredential,
+            sourceControlConnections
+              .replaceCredential(input)
+              .pipe(Effect.map((connection) => ({ connection }))),
+            { "rpc.aggregate": "source-control-connections" },
+          ),
+        [WS_METHODS.sourceControlConnectionsRemove]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsRemove,
+            sourceControlConnections.remove(input.id).pipe(Effect.as({ id: input.id })),
+            { "rpc.aggregate": "source-control-connections" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
