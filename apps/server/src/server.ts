@@ -84,6 +84,9 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlConnectionService from "./sourceControl/connections/SourceControlConnectionService.ts";
+import * as SourceControlConnectionStore from "./sourceControl/connections/SourceControlConnectionStore.ts";
+import * as SourceControlConnectionVerifierRegistry from "./sourceControl/connections/SourceControlConnectionVerifierRegistry.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -327,6 +330,12 @@ const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.l
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
+const SourceControlConnectionServiceLayerLive = SourceControlConnectionService.layer.pipe(
+  Layer.provide(SourceControlConnectionStore.layer),
+  Layer.provide(SourceControlConnectionVerifierRegistry.layerEmpty),
+  Layer.provide(ServerSecretStore.layer),
+);
+
 const ReviewLayerLive = ReviewService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
@@ -405,7 +414,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
+    Layer.mergeAll(
+      SourceControlProviderRegistryLayerLive,
+      SourceControlConnectionServiceLayerLive,
+      PullRequestServiceLive,
+    ),
   ),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),

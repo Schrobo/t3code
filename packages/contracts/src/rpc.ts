@@ -198,6 +198,16 @@ import {
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
+  SourceControlConnectionAddInput,
+  SourceControlConnectionAddResult,
+  SourceControlConnectionError,
+  SourceControlConnectionListInput,
+  SourceControlConnectionListResult,
+  SourceControlConnectionRemoveInput,
+  SourceControlConnectionRemoveResult,
+  SourceControlConnectionReplaceCredentialInput,
+  SourceControlConnectionVerifyInput,
+  SourceControlConnectionVerifyResult,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -324,6 +334,11 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+  sourceControlConnectionsList: "sourceControl.connections.list",
+  sourceControlConnectionsAdd: "sourceControl.connections.add",
+  sourceControlConnectionsVerify: "sourceControl.connections.verify",
+  sourceControlConnectionsReplaceCredential: "sourceControl.connections.replaceCredential",
+  sourceControlConnectionsRemove: "sourceControl.connections.remove",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -651,6 +666,50 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     payload: SourceControlPublishRepositoryInput,
     success: SourceControlPublishRepositoryResult,
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  },
+);
+
+const SourceControlConnectionRpcError = Schema.Union([
+  SourceControlConnectionError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsSourceControlConnectionsListRpc = Rpc.make(WS_METHODS.sourceControlConnectionsList, {
+  payload: SourceControlConnectionListInput,
+  success: SourceControlConnectionListResult,
+  error: SourceControlConnectionRpcError,
+});
+
+export const WsSourceControlConnectionsAddRpc = Rpc.make(WS_METHODS.sourceControlConnectionsAdd, {
+  payload: SourceControlConnectionAddInput,
+  success: SourceControlConnectionAddResult,
+  error: SourceControlConnectionRpcError,
+});
+
+export const WsSourceControlConnectionsVerifyRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsVerify,
+  {
+    payload: SourceControlConnectionVerifyInput,
+    success: SourceControlConnectionVerifyResult,
+    error: SourceControlConnectionRpcError,
+  },
+);
+
+export const WsSourceControlConnectionsReplaceCredentialRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsReplaceCredential,
+  {
+    payload: SourceControlConnectionReplaceCredentialInput,
+    success: SourceControlConnectionVerifyResult,
+    error: SourceControlConnectionRpcError,
+  },
+);
+
+export const WsSourceControlConnectionsRemoveRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsRemove,
+  {
+    payload: SourceControlConnectionRemoveInput,
+    success: SourceControlConnectionRemoveResult,
+    error: SourceControlConnectionRpcError,
   },
 );
 
@@ -1090,6 +1149,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsSourceControlConnectionsListRpc,
+  WsSourceControlConnectionsAddRpc,
+  WsSourceControlConnectionsVerifyRpc,
+  WsSourceControlConnectionsReplaceCredentialRpc,
+  WsSourceControlConnectionsRemoveRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

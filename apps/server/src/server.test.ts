@@ -140,6 +140,9 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlConnectionService from "./sourceControl/connections/SourceControlConnectionService.ts";
+import * as SourceControlConnectionStore from "./sourceControl/connections/SourceControlConnectionStore.ts";
+import * as SourceControlConnectionVerifierRegistry from "./sourceControl/connections/SourceControlConnectionVerifierRegistry.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -1041,6 +1044,13 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(makeAuthTestLayer()),
+      Layer.provide(
+        SourceControlConnectionService.layer.pipe(
+          Layer.provide(SourceControlConnectionStore.layer),
+          Layer.provide(SourceControlConnectionVerifierRegistry.layerEmpty),
+          Layer.provide(ServerSecretStore.layer),
+        ),
+      ),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
