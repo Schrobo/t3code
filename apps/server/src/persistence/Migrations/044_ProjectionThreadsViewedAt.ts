@@ -7,6 +7,15 @@ export default Effect.gen(function* () {
     PRAGMA table_info(projection_threads)
   `;
 
+  // The previous PR used migration ID 43 for viewed_at. Repair those databases
+  // because the current migration 43 for unsettled_at is skipped by ID.
+  if (!columns.some((column) => column.name === "unsettled_at")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN unsettled_at TEXT
+    `;
+  }
+
   if (!columns.some((column) => column.name === "viewed_at")) {
     yield* sql`
       ALTER TABLE projection_threads
