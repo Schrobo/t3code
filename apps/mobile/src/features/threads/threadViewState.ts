@@ -50,3 +50,41 @@ export function resolveAppliedThreadViewBoundary(input: {
 
   return undefined;
 }
+
+export function resolveThreadViewTrackingState(input: {
+  readonly completedAt: string | null;
+  readonly viewedAt: string | undefined;
+  readonly requestedBoundaries: ReadonlySet<string>;
+  readonly retryBoundary: string | undefined;
+}): {
+  readonly retryBoundary: string | undefined;
+  readonly shouldClearRequestedBoundaries: boolean;
+} {
+  if (input.completedAt === null || input.viewedAt === undefined) {
+    return {
+      retryBoundary: input.retryBoundary,
+      shouldClearRequestedBoundaries: false,
+    };
+  }
+
+  const completedAtMs = Date.parse(input.completedAt);
+  const viewedAtMs = Date.parse(input.viewedAt);
+  if (!Number.isFinite(completedAtMs) || !Number.isFinite(viewedAtMs)) {
+    return {
+      retryBoundary: input.retryBoundary,
+      shouldClearRequestedBoundaries: false,
+    };
+  }
+
+  if (viewedAtMs >= completedAtMs) {
+    return {
+      retryBoundary: input.retryBoundary,
+      shouldClearRequestedBoundaries: true,
+    };
+  }
+
+  return {
+    retryBoundary: resolveAppliedThreadViewBoundary(input) ?? input.retryBoundary,
+    shouldClearRequestedBoundaries: false,
+  };
+}

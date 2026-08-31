@@ -75,7 +75,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
-import { resolveAppliedThreadViewBoundary, resolveThreadViewCommand } from "./threadViewState";
+import { resolveThreadViewCommand, resolveThreadViewTrackingState } from "./threadViewState";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -292,11 +292,25 @@ function ThreadRouteContent(
   const selectedThreadViewedAtRef = useRef(selectedThread?.viewedAt);
   selectedThreadViewedAtRef.current = selectedThread?.viewedAt;
   const requestedThreadViewBoundariesRef = useRef(new Set<string>());
-  const appliedThreadViewBoundary = resolveAppliedThreadViewBoundary({
-    completedAt: selectedThreadCompletedAt,
-    viewedAt: selectedThread?.viewedAt,
-    requestedBoundaries: requestedThreadViewBoundariesRef.current,
-  });
+  const [threadViewRetryBoundary, setThreadViewRetryBoundary] = useState<string>();
+  useEffect(() => {
+    requestedThreadViewBoundariesRef.current.clear();
+    setThreadViewRetryBoundary(undefined);
+  }, [selectedThreadEnvironmentId, selectedThreadId]);
+  useEffect(() => {
+    const trackingState = resolveThreadViewTrackingState({
+      completedAt: selectedThreadCompletedAt,
+      viewedAt: selectedThread?.viewedAt,
+      requestedBoundaries: requestedThreadViewBoundariesRef.current,
+      retryBoundary: threadViewRetryBoundary,
+    });
+    if (trackingState.shouldClearRequestedBoundaries) {
+      requestedThreadViewBoundariesRef.current.clear();
+    }
+    if (trackingState.retryBoundary !== threadViewRetryBoundary) {
+      setThreadViewRetryBoundary(trackingState.retryBoundary);
+    }
+  }, [selectedThread?.viewedAt, selectedThreadCompletedAt, threadViewRetryBoundary]);
   const supportsThreadViewState = serverConfig?.environment.capabilities.threadViewState === true;
   const [appState, setAppState] = useState(() => AppState.currentState);
   useEffect(() => {
@@ -315,19 +329,10 @@ function ThreadRouteContent(
         appState,
         connectionState: routeConnectionState,
         completedAt: selectedThreadCompletedAt,
-        viewedAt: appliedThreadViewBoundary ?? selectedThreadViewedAtRef.current,
+        viewedAt: selectedThreadViewedAtRef.current,
         supported: supportsThreadViewState,
       });
-      if (command === undefined) {
-        if (
-          selectedThreadCompletedAt !== null &&
-          selectedThreadViewedAtRef.current !== undefined &&
-          Date.parse(selectedThreadViewedAtRef.current) >= Date.parse(selectedThreadCompletedAt)
-        ) {
-          requestedThreadViewBoundariesRef.current.clear();
-        }
-        return;
-      }
+      if (command === undefined) return;
 
       requestedThreadViewBoundariesRef.current.add(command.viewedThrough);
       void viewThread({
@@ -339,12 +344,12 @@ function ThreadRouteContent(
       });
     }, [
       appState,
-      appliedThreadViewBoundary,
       routeConnectionState,
       selectedThreadCompletedAt,
       selectedThreadEnvironmentId,
       selectedThreadId,
       supportsThreadViewState,
+      threadViewRetryBoundary,
       viewThread,
     ]),
   );

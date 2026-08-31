@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveAppliedThreadViewBoundary, resolveThreadViewCommand } from "./threadViewState";
+import {
+  resolveAppliedThreadViewBoundary,
+  resolveThreadViewCommand,
+  resolveThreadViewTrackingState,
+} from "./threadViewState";
 
 const input = {
   appState: "active" as const,
@@ -101,5 +105,47 @@ describe("resolveAppliedThreadViewBoundary", () => {
         requestedBoundaries,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("resolveThreadViewTrackingState", () => {
+  const earlierCompletion = "2026-01-01T00:01:00.000Z";
+  const laterCompletion = "2026-01-01T00:02:00.000Z";
+  const requestedBoundaries = new Set([earlierCompletion, laterCompletion]);
+
+  it("keeps its retry signal when a remote unread action replaces an applied view", () => {
+    const appliedEarlierView = resolveThreadViewTrackingState({
+      completedAt: laterCompletion,
+      viewedAt: earlierCompletion,
+      requestedBoundaries,
+      retryBoundary: undefined,
+    });
+    expect(appliedEarlierView).toEqual({
+      retryBoundary: earlierCompletion,
+      shouldClearRequestedBoundaries: false,
+    });
+
+    expect(
+      resolveThreadViewTrackingState({
+        completedAt: laterCompletion,
+        viewedAt: "2026-01-01T00:01:59.999Z",
+        requestedBoundaries,
+        retryBoundary: appliedEarlierView.retryBoundary,
+      }),
+    ).toEqual(appliedEarlierView);
+  });
+
+  it("clears requested views without changing the retry signal", () => {
+    expect(
+      resolveThreadViewTrackingState({
+        completedAt: laterCompletion,
+        viewedAt: laterCompletion,
+        requestedBoundaries,
+        retryBoundary: earlierCompletion,
+      }),
+    ).toEqual({
+      retryBoundary: earlierCompletion,
+      shouldClearRequestedBoundaries: true,
+    });
   });
 });
