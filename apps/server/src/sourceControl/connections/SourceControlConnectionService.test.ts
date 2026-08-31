@@ -5,6 +5,7 @@ import {
   SourceControlConnectionAmbiguousError,
   SourceControlConnectionAuthenticationError,
   SourceControlConnectionId,
+  SourceControlConnectionNotFoundError,
   SourceControlConnectionPersistenceError,
   SourceControlConnectionUrl,
 } from "@t3tools/contracts";
@@ -46,6 +47,11 @@ const verifier: SourceControlConnectionVerifierRegistry.SourceControlConnectionV
         apiUrl:
           input.apiUrl ??
           SourceControlConnectionUrl.make(new URL("api/v1", input.baseUrl).toString()),
+        sshHost:
+          input.sshHost ??
+          (new URL(input.baseUrl)
+            .hostname as SourceControlConnectionVerifierRegistry.SourceControlConnectionVerificationResult["sshHost"]),
+        sshPort: input.sshPort ?? 22,
         identity: { login: `user-${input.token.length}` },
         serverVersion: "12.0.0",
         capabilities,
@@ -78,6 +84,8 @@ const rollbackConnection: StoredSourceControlConnection = {
   displayName: "Rollback Forgejo",
   baseUrl: SourceControlConnectionUrl.make("https://rollback.example.com/"),
   apiUrl: SourceControlConnectionUrl.make("https://rollback.example.com/api/v1"),
+  sshHost: "rollback.example.com" as StoredSourceControlConnection["sshHost"],
+  sshPort: 22,
   identity: { login: "rollback" },
   serverVersion: "12.0.0",
   capabilities,
@@ -161,6 +169,15 @@ it.layer(NodeServices.layer)("SourceControlConnectionService", (it) => {
         SourceControlConnectionUrl.make("https://git.other.example:8443/owner/repo"),
       );
       assert.equal(resolved.connection.id, third.id);
+
+      const resolvedSsh = yield* service.resolveByRemoteUrl(
+        "ssh://git@git.other.example:22/owner/repo.git",
+      );
+      assert.equal(resolvedSsh.connection.id, third.id);
+      const scpAmbiguity = yield* Effect.flip(
+        service.resolveByRemoteUrl("git@git.example.com:owner/repo.git"),
+      );
+      assert.instanceOf(scpAmbiguity, SourceControlConnectionAmbiguousError);
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -186,6 +203,48 @@ it.layer(NodeServices.layer)("SourceControlConnectionService", (it) => {
       assert.isTrue(
         Option.isNone(yield* secretStore.get(`source-control-connection-${created.id}`)),
       );
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("prefers the most specific HTTPS base path and retains custom SSH routing", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlConnectionService;
+      yield* service.add(addInput("root", "https://git.example.com/"));
+      const nested = yield* service.add(
+        decodeAddInput({
+          provider: "forgejo",
+          displayName: "nested",
+          baseUrl: "https://git.example.com/forge",
+          sshHost: "ssh.git.example.com",
+          sshPort: 2222,
+          token: "credential-nested",
+        }),
+      );
+
+      const httpsResolved = yield* service.resolveByRemoteUrl(
+        "https://git.example.com/forge/owner/repo.git",
+      );
+      const sshResolved = yield* service.resolveByRemoteUrl(
+        "ssh://git@ssh.git.example.com:2222/owner/repo.git",
+      );
+      const verified = yield* service.verify(nested.id);
+
+      assert.equal(httpsResolved.connection.id, nested.id);
+      assert.equal(sshResolved.connection.id, nested.id);
+      assert.equal(verified.sshHost, "ssh.git.example.com");
+      assert.equal(verified.sshPort, 2222);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("does not infer Forgejo from hostname substrings", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlConnectionService;
+      yield* service.add(addInput("known", "https://git.example.com/"));
+
+      const error = yield* service
+        .resolveByRemoteUrl("https://forgejo-imposter.example.net/owner/repo.git")
+        .pipe(Effect.flip);
+      assert.isTrue(Schema.is(SourceControlConnectionNotFoundError)(error));
     }).pipe(Effect.provide(makeLayer())),
   );
 

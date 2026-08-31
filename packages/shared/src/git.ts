@@ -126,7 +126,7 @@ export function normalizeGitRemoteUrl(value: string): string {
         .filter((segment) => segment.length > 0)
         .join("/");
       if (url.hostname && repositoryPath.includes("/")) {
-        return `${url.hostname}/${repositoryPath}`;
+        return `${url.host}/${repositoryPath}`;
       }
     } catch {
       return normalized;
@@ -146,18 +146,66 @@ export function normalizeGitRemoteUrl(value: string): string {
 /**
  * Best-effort parse of a GitHub `owner/repo` identifier from common remote URL shapes.
  */
-export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return null;
+export interface ParsedGitRemoteUrl {
+  readonly transport: "http" | "ssh" | "git";
+  readonly hostname: string;
+  readonly port: number | null;
+  readonly repositoryPath: string;
+  readonly scpStyle: boolean;
+}
+
+export function parseGitRemoteUrl(value: string | null): ParsedGitRemoteUrl | null {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) return null;
+
+  const scpMatch = /^[a-zA-Z0-9._-]+@([^:/\s]+):(.+)$/u.exec(trimmed);
+  if (scpMatch?.[1] && scpMatch[2]) {
+    const repositoryPath = scpMatch[2].replace(/^\/+|\/+$/gu, "").replace(/\.git$/iu, "");
+    return repositoryPath.includes("/")
+      ? {
+          transport: "ssh",
+          hostname: scpMatch[1].toLowerCase(),
+          port: null,
+          repositoryPath,
+          scpStyle: true,
+        }
+      : null;
   }
 
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+  try {
+    const parsed = new URL(trimmed);
+    const transport =
+      parsed.protocol === "ssh:"
+        ? "ssh"
+        : parsed.protocol === "git:"
+          ? "git"
+          : parsed.protocol === "http:" || parsed.protocol === "https:"
+            ? "http"
+            : null;
+    const repositoryPath = parsed.pathname.replace(/^\/+|\/+$/gu, "").replace(/\.git$/iu, "");
+    if (transport === null || !parsed.hostname || !repositoryPath.includes("/")) return null;
+    return {
+      transport,
+      hostname: parsed.hostname.toLowerCase(),
+      port: parsed.port === "" ? (transport === "ssh" ? 22 : null) : Number(parsed.port),
+      repositoryPath,
+      scpStyle: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
+  const parsed = parseGitRemoteUrl(url);
+  if (parsed === null) return null;
+  const segments = parsed.repositoryPath.split("/").filter((segment) => segment.length > 0);
+  return segments.length < 2 ? null : segments.slice(-2).join("/");
+}
+
+/** @deprecated Use the provider-neutral parser. */
+export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
+  return parseRepositoryNameWithOwnerFromRemoteUrl(url);
 }
 
 function deriveLocalBranchNameCandidatesFromRemoteRef(

@@ -1,4 +1,5 @@
 import {
+  PortSchema,
   SourceControlConnectionAlreadyExistsError,
   SourceControlConnectionCapabilities,
   SourceControlConnectionId,
@@ -6,6 +7,7 @@ import {
   SourceControlConnectionNotFoundError,
   SourceControlConnectionPersistenceError,
   SourceControlConnectionProviderKind,
+  SourceControlConnectionSshHost,
   SourceControlConnectionUrl,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -27,6 +29,8 @@ export const StoredSourceControlConnection = Schema.Struct({
   displayName: TrimmedNonEmptyString,
   baseUrl: SourceControlConnectionUrl,
   apiUrl: SourceControlConnectionUrl,
+  sshHost: SourceControlConnectionSshHost,
+  sshPort: PortSchema,
   identity: SourceControlConnectionIdentity,
   serverVersion: TrimmedNonEmptyString,
   capabilities: SourceControlConnectionCapabilities,
