@@ -36,6 +36,7 @@ import {
   detectSourceControlProviderFromGitRemoteUrl,
   mergeGitStatusParts,
   normalizeGitRemoteUrl,
+  parseRepositoryNameWithOwnerFromRemoteUrl,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
@@ -233,20 +234,6 @@ function resolvePullRequestWorktreeLocalBranchName(
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
   return `t3code/pr-${pullRequest.number}/${suffix}`;
-}
-
-function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -1235,7 +1222,7 @@ export const make = Effect.gen(function* () {
     }
 
     const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
-    const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+    const repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
     return {
       remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
       repositoryNameWithOwner,

@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
+import { parseGitRemoteUrl } from "@t3tools/shared/git";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import {
@@ -65,6 +66,9 @@ export class SourceControlConnectionService extends Context.Service<
     readonly resolveByOrigin: (
       origin: SourceControlConnectionUrl,
     ) => Effect.Effect<ResolvedSourceControlConnection, SourceControlConnectionError>;
+    readonly resolveByRemoteUrl: (
+      remoteUrl: string,
+    ) => Effect.Effect<ResolvedSourceControlConnection, SourceControlConnectionError>;
   }
 >()("t3/sourceControl/connections/SourceControlConnectionService") {}
 
@@ -108,6 +112,8 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
         baseUrl: input.baseUrl,
         ...(input.apiUrl === undefined ? {} : { apiUrl: input.apiUrl }),
+        ...(input.sshHost === undefined ? {} : { sshHost: input.sshHost }),
+        ...(input.sshPort === undefined ? {} : { sshPort: input.sshPort }),
         token: input.token,
       });
       const id = yield* crypto.randomUUIDv4.pipe(
@@ -122,6 +128,8 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
         displayName: input.displayName,
         ...verified,
+        ...(input.sshHost === undefined ? {} : { sshHost: input.sshHost }),
+        ...(input.sshPort === undefined ? {} : { sshPort: input.sshPort }),
         credentialConfigured: true,
         verifiedAt: yield* DateTime.now,
         credentialRef,
@@ -157,6 +165,8 @@ export const make = Effect.gen(function* () {
         connectionId: stored.id,
         baseUrl: stored.baseUrl,
         apiUrl: stored.apiUrl,
+        sshHost: stored.sshHost,
+        sshPort: stored.sshPort,
         token,
       });
       return {
@@ -269,6 +279,55 @@ export const make = Effect.gen(function* () {
       return yield* resolveById(connections[0]!.id);
     });
 
+  const resolveByRemoteUrl = (remoteUrl: string) =>
+    Effect.gen(function* () {
+      const parsed = parseGitRemoteUrl(remoteUrl);
+      if (parsed === null) {
+        return yield* new SourceControlConnectionNotFoundError({});
+      }
+      const matchingConnections = (yield* store.list).filter((connection) => {
+        if (parsed.transport === "http") {
+          const remote = new URL(remoteUrl);
+          const base = new URL(connection.baseUrl);
+          const basePath = base.pathname.replace(/\/+$/u, "");
+          return (
+            remote.origin === base.origin &&
+            (basePath === "" ||
+              remote.pathname === basePath ||
+              remote.pathname.startsWith(`${basePath}/`))
+          );
+        }
+        if (parsed.transport !== "ssh") return false;
+        if (parsed.hostname !== connection.sshHost) return false;
+        return parsed.scpStyle || parsed.port === connection.sshPort;
+      });
+      const connections =
+        parsed.transport === "http" && matchingConnections.length > 1
+          ? (() => {
+              const longestBasePath = Math.max(
+                ...matchingConnections.map(
+                  (connection) => new URL(connection.baseUrl).pathname.replace(/\/+$/u, "").length,
+                ),
+              );
+              return matchingConnections.filter(
+                (connection) =>
+                  new URL(connection.baseUrl).pathname.replace(/\/+$/u, "").length ===
+                  longestBasePath,
+              );
+            })()
+          : matchingConnections;
+      if (connections.length === 0) {
+        return yield* new SourceControlConnectionNotFoundError({});
+      }
+      if (connections.length > 1) {
+        return yield* new SourceControlConnectionAmbiguousError({
+          origin: connections[0]!.baseUrl,
+          connectionIds: connections.map((connection) => connection.id),
+        });
+      }
+      return yield* resolveById(connections[0]!.id);
+    });
+
   return SourceControlConnectionService.of({
     list,
     add,
@@ -277,6 +336,7 @@ export const make = Effect.gen(function* () {
     remove,
     resolveById,
     resolveByOrigin,
+    resolveByRemoteUrl,
   });
 });
 

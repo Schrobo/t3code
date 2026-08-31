@@ -6,7 +6,9 @@ import {
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  parseGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  parseRepositoryNameWithOwnerFromRemoteUrl,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -32,12 +34,12 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
-  it("drops explicit ports from URL-shaped remotes", () => {
+  it("preserves explicit ports from URL-shaped remotes", () => {
     expect(normalizeGitRemoteUrl("https://gitlab.company.com:8443/team/project.git")).toBe(
-      "gitlab.company.com/team/project",
+      "gitlab.company.com:8443/team/project",
     );
     expect(normalizeGitRemoteUrl("ssh://git@gitlab.company.com:2222/team/project.git")).toBe(
-      "gitlab.company.com/team/project",
+      "gitlab.company.com:2222/team/project",
     );
   });
 
@@ -48,6 +50,31 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(
       "bitbucket.org/workspace/repo",
     );
+  });
+});
+
+describe("parseGitRemoteUrl", () => {
+  it("keeps transport authority and repository path", () => {
+    expect(parseGitRemoteUrl("ssh://git@forge.example:2222/owner/repo.git")).toEqual({
+      transport: "ssh",
+      hostname: "forge.example",
+      port: 2222,
+      repositoryPath: "owner/repo",
+      scpStyle: false,
+    });
+    expect(parseGitRemoteUrl("git@forge.example:owner/repo.git")).toEqual({
+      transport: "ssh",
+      hostname: "forge.example",
+      port: null,
+      repositoryPath: "owner/repo",
+      scpStyle: true,
+    });
+  });
+
+  it("extracts a provider-neutral owner/repository pair", () => {
+    expect(
+      parseRepositoryNameWithOwnerFromRemoteUrl("https://forge.example/base-path/owner/repo.git"),
+    ).toBe("owner/repo");
   });
 });
 

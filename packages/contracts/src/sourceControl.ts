@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 const SOURCE_CONTROL_CONNECTION_URL_MAX_LENGTH = 2_048;
@@ -78,12 +78,26 @@ export const SourceControlConnectionIdentity = Schema.Struct({
 });
 export type SourceControlConnectionIdentity = typeof SourceControlConnectionIdentity.Type;
 
+export const SourceControlConnectionSshHost = TrimmedNonEmptyString.pipe(
+  Schema.decodeTo(
+    TrimmedNonEmptyString,
+    SchemaTransformation.transform({
+      decode: (host) => host.toLowerCase(),
+      encode: (host) => host.toLowerCase(),
+    }),
+  ),
+  Schema.brand("SourceControlConnectionSshHost"),
+);
+export type SourceControlConnectionSshHost = typeof SourceControlConnectionSshHost.Type;
+
 export const SourceControlConnection = Schema.Struct({
   id: SourceControlConnectionId,
   provider: SourceControlConnectionProviderKind,
   displayName: TrimmedNonEmptyString,
   baseUrl: SourceControlConnectionUrl,
   apiUrl: SourceControlConnectionUrl,
+  sshHost: SourceControlConnectionSshHost,
+  sshPort: PortSchema,
   identity: SourceControlConnectionIdentity,
   serverVersion: TrimmedNonEmptyString,
   capabilities: SourceControlConnectionCapabilities,
@@ -102,6 +116,8 @@ export const SourceControlConnectionAddInput = Schema.Struct({
   displayName: TrimmedNonEmptyString,
   baseUrl: SourceControlConnectionUrl,
   apiUrl: Schema.optional(SourceControlConnectionUrl),
+  sshHost: Schema.optional(SourceControlConnectionSshHost),
+  sshPort: Schema.optional(PortSchema),
   token: SourceControlConnectionToken,
 });
 export type SourceControlConnectionAddInput = typeof SourceControlConnectionAddInput.Type;
@@ -269,6 +285,7 @@ export const SourceControlProviderKind = Schema.Literals([
   "gitlab",
   "azure-devops",
   "bitbucket",
+  "forgejo",
   "unknown",
 ]);
 export type SourceControlProviderKind = typeof SourceControlProviderKind.Type;
@@ -313,6 +330,7 @@ export type SourceControlCloneProtocol = typeof SourceControlCloneProtocol.Type;
 
 export const SourceControlRepositoryInfo = Schema.Struct({
   provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
   nameWithOwner: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
@@ -321,6 +339,7 @@ export type SourceControlRepositoryInfo = typeof SourceControlRepositoryInfo.Typ
 
 export const SourceControlRepositoryLookupInput = Schema.Struct({
   provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
   repository: TrimmedNonEmptyString,
   cwd: Schema.optional(TrimmedNonEmptyString),
 });
@@ -328,6 +347,7 @@ export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryL
 
 export const SourceControlCloneRepositoryInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
+  connectionId: Schema.optional(SourceControlConnectionId),
   repository: Schema.optional(TrimmedNonEmptyString),
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
   destinationPath: TrimmedNonEmptyString,
@@ -345,6 +365,7 @@ export type SourceControlCloneRepositoryResult = typeof SourceControlCloneReposi
 export const SourceControlPublishRepositoryInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
   repository: TrimmedNonEmptyString,
   visibility: SourceControlRepositoryVisibility,
   remoteName: Schema.optional(TrimmedNonEmptyString),
@@ -364,6 +385,30 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
   status: SourceControlPublishStatus,
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
+
+export const SourceControlRepositorySearchItem = Schema.Struct({
+  provider: SourceControlProviderKind,
+  connectionId: SourceControlConnectionId,
+  nameWithOwner: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  sshUrl: TrimmedNonEmptyString,
+  visibility: SourceControlRepositoryVisibility,
+  defaultBranch: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type SourceControlRepositorySearchItem = typeof SourceControlRepositorySearchItem.Type;
+
+export const SourceControlRepositorySearchInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
+  query: Schema.String,
+  limit: Schema.optional(PositiveInt),
+});
+export type SourceControlRepositorySearchInput = typeof SourceControlRepositorySearchInput.Type;
+
+export const SourceControlRepositorySearchResult = Schema.Struct({
+  repositories: Schema.Array(SourceControlRepositorySearchItem),
+});
+export type SourceControlRepositorySearchResult = typeof SourceControlRepositorySearchResult.Type;
 
 export const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
 export type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;

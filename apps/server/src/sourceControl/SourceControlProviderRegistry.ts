@@ -15,6 +15,7 @@ import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlPro
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   probeSourceControlProvider,
@@ -24,6 +25,7 @@ import {
 import { ServerConfig } from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { SourceControlConnectionService } from "./connections/SourceControlConnectionService.ts";
 
 const PROVIDER_DETECTION_CACHE_CAPACITY = 2_048;
 const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
@@ -31,7 +33,7 @@ const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
   readonly provider: SourceControlProvider.SourceControlProvider["Service"];
-  readonly discovery: SourceControlProviderDiscoverySpec;
+  readonly discovery?: SourceControlProviderDiscoverySpec;
 }
 
 export interface SourceControlProviderHandle {
@@ -104,6 +106,13 @@ function unsupportedProvider(
         operation: "createRepository",
         cwd: input.cwd,
         repository: SourceControlProvider.transportSafeSourceControlErrorValue(input.repository),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    searchRepositories: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "searchRepositories",
+        cwd: input.cwd,
         detail: `No ${kind} source control provider is registered.`,
       }),
     getDefaultBranch: (input) =>
@@ -181,6 +190,9 @@ function bindProviderContext(
         context: input.context ?? context,
       }),
     createRepository: (input) => provider.createRepository(input),
+    ...(provider.searchRepositories === undefined
+      ? {}
+      : { searchRepositories: (input) => provider.searchRepositories!(input) }),
     getDefaultBranch: (input) =>
       provider.getDefaultBranch({
         ...input,
@@ -195,7 +207,18 @@ function bindProviderContext(
 }
 
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
-  function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
+  function* (
+    registrations: ReadonlyArray<SourceControlProviderRegistration>,
+    options?: {
+      readonly resolveNativeProvider?: (
+        context: SourceControlProvider.SourceControlProviderContext,
+        cwd: string,
+      ) => Effect.Effect<
+        SourceControlProvider.SourceControlProviderContext | null,
+        SourceControlProviderError
+      >;
+    },
+  ) {
     const config = yield* ServerConfig;
     const process = yield* VcsProcess.VcsProcess;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
@@ -203,7 +226,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       SourceControlProviderKind,
       SourceControlProvider.SourceControlProvider["Service"]
     >(registrations.map((registration) => [registration.kind, registration.provider]));
-    const discoverySpecs = registrations.map((registration) => registration.discovery);
+    const discoverySpecs = registrations.flatMap((registration) =>
+      registration.discovery === undefined ? [] : [registration.discovery],
+    );
 
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
@@ -234,7 +259,10 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        const context = selectProviderContext(remotes.remotes);
+        let context = selectProviderContext(remotes.remotes);
+        if (context?.provider.kind === "unknown" && options?.resolveNativeProvider !== undefined) {
+          context = (yield* options.resolveNativeProvider(context, cwd)) ?? context;
+        }
 
         return yield* refineUnknownRemoteProvider({
           specs: discoverySpecs,
@@ -257,11 +285,20 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
       (input.context === undefined
         ? Cache.get(providerContextCache, input.cwd)
-        : refineUnknownRemoteProvider({
-            specs: discoverySpecs,
-            process,
-            cwd: input.cwd,
-            context: input.context,
+        : Effect.gen(function* () {
+            let context: SourceControlProvider.SourceControlProviderContext = input.context!;
+            if (
+              context.provider.kind === "unknown" &&
+              options?.resolveNativeProvider !== undefined
+            ) {
+              context = (yield* options.resolveNativeProvider(context, input.cwd)) ?? context;
+            }
+            return yield* refineUnknownRemoteProvider({
+              specs: discoverySpecs,
+              process,
+              cwd: input.cwd,
+              context,
+            });
           })
       ).pipe(
         Effect.map((context) => {
@@ -322,4 +359,54 @@ export const make = Effect.gen(function* () {
   ]);
 });
 
+export const makeWithForgejo = Effect.gen(function* () {
+  const github = yield* GitHubSourceControlProvider.make;
+  const gitlab = yield* GitLabSourceControlProvider.make;
+  const bitbucket = yield* BitbucketSourceControlProvider.make;
+  const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
+  const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
+  const forgejo = yield* ForgejoSourceControlProvider.make;
+  const connections = yield* SourceControlConnectionService;
+
+  return yield* makeWithProviders(
+    [
+      { kind: "github", provider: github, discovery: GitHubSourceControlProvider.discovery },
+      { kind: "gitlab", provider: gitlab, discovery: GitLabSourceControlProvider.discovery },
+      {
+        kind: "azure-devops",
+        provider: azureDevOps,
+        discovery: AzureDevOpsSourceControlProvider.discovery,
+      },
+      { kind: "bitbucket", provider: bitbucket, discovery: bitbucketDiscovery },
+      { kind: "forgejo", provider: forgejo },
+    ],
+    {
+      resolveNativeProvider: (context, cwd) =>
+        connections.resolveByRemoteUrl(context.remoteUrl).pipe(
+          Effect.map((resolved) => ({
+            ...context,
+            provider: {
+              kind: "forgejo" as const,
+              name: "Forgejo",
+              baseUrl: resolved.connection.baseUrl,
+            },
+            connectionId: resolved.connection.id,
+          })),
+          Effect.catchTag("SourceControlConnectionNotFoundError", () => Effect.succeed(null)),
+          Effect.mapError(
+            (cause) =>
+              new SourceControlProviderError({
+                provider: "forgejo",
+                operation: "detectProvider",
+                cwd,
+                detail: "Multiple Forgejo connections match this repository remote.",
+                cause,
+              }),
+          ),
+        ),
+    },
+  );
+});
+
 export const layer = Layer.effect(SourceControlProviderRegistry, make);
+export const layerWithForgejo = Layer.effect(SourceControlProviderRegistry, makeWithForgejo);

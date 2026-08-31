@@ -27,6 +27,8 @@ const fixture = (id = connectionId): StoredSourceControlConnection => ({
   displayName: "Work Forgejo",
   baseUrl: SourceControlConnectionUrl.make("https://git.example.com/"),
   apiUrl: SourceControlConnectionUrl.make("https://git.example.com/api/v1"),
+  sshHost: "git.example.com" as StoredSourceControlConnection["sshHost"],
+  sshPort: 22,
   identity: { login: "octo" },
   serverVersion: "12.0.0",
   capabilities: {

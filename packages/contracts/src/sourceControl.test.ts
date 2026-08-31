@@ -57,6 +57,8 @@ describe("SourceControlConnection contracts", () => {
       displayName: "Work Forgejo",
       baseUrl: "https://git.example.com/",
       apiUrl: "https://git.example.com/api/v1",
+      sshHost: "git.example.com",
+      sshPort: 22,
       identity: {
         login: "octo",
         displayName: "Octo Cat",

@@ -28,6 +28,10 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
+    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
   });
 
   it("falls back to generic change request copy for unknown providers", () => {

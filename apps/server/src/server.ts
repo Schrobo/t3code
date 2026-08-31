@@ -86,7 +86,9 @@ import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlConnectionService from "./sourceControl/connections/SourceControlConnectionService.ts";
 import * as SourceControlConnectionStore from "./sourceControl/connections/SourceControlConnectionStore.ts";
-import * as SourceControlConnectionVerifierRegistry from "./sourceControl/connections/SourceControlConnectionVerifierRegistry.ts";
+import * as ForgejoConnectionVerifier from "./sourceControl/forgejo/ForgejoConnectionVerifier.ts";
+import * as ForgejoApi from "./sourceControl/forgejo/ForgejoApi.ts";
+import * as ForgejoHttpClient from "./sourceControl/forgejo/ForgejoHttpClient.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -294,10 +296,29 @@ const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
 );
 
-const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.layer.pipe(
+const SourceControlConnectionServiceLayerLive = SourceControlConnectionService.layer.pipe(
+  Layer.provide(SourceControlConnectionStore.layer),
+  Layer.provide(ForgejoConnectionVerifier.layer.pipe(Layer.provide(ForgejoHttpClient.layer))),
+  Layer.provide(ServerSecretStore.layer),
+);
+
+const ForgejoApiLayerLive = ForgejoApi.layer.pipe(
+  Layer.provide(ForgejoHttpClient.layer),
+  Layer.provide(SourceControlConnectionServiceLayerLive),
+  Layer.provide(GitVcsDriver.layer),
+);
+
+const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.layerWithForgejo.pipe(
   Layer.provide(
-    Layer.mergeAll(AzureDevOpsCli.layer, BitbucketApi.layer, GitHubCli.layer, GitLabCli.layer),
+    Layer.mergeAll(
+      AzureDevOpsCli.layer,
+      BitbucketApi.layer,
+      GitHubCli.layer,
+      GitLabCli.layer,
+      ForgejoApiLayerLive,
+    ),
   ),
+  Layer.provide(SourceControlConnectionServiceLayerLive),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
@@ -329,12 +350,6 @@ const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
-);
-
-const SourceControlConnectionServiceLayerLive = SourceControlConnectionService.layer.pipe(
-  Layer.provide(SourceControlConnectionStore.layer),
-  Layer.provide(SourceControlConnectionVerifierRegistry.layerEmpty),
-  Layer.provide(ServerSecretStore.layer),
 );
 
 const ReviewLayerLive = ReviewService.layer.pipe(

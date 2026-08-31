@@ -6,6 +6,7 @@ import {
   type SourceControlConnectionIncompatibleVersionError,
   SourceControlConnectionProviderUnavailableError,
   type SourceControlConnectionProviderKind,
+  type SourceControlConnectionSshHost,
   type SourceControlConnectionUrl,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -17,6 +18,8 @@ export interface SourceControlConnectionVerificationInput {
   readonly connectionId?: SourceControlConnectionId;
   readonly baseUrl: SourceControlConnectionUrl;
   readonly apiUrl?: SourceControlConnectionUrl;
+  readonly sshHost?: SourceControlConnectionSshHost;
+  readonly sshPort?: number;
   readonly token: string;
 }
 
@@ -24,6 +27,8 @@ export interface SourceControlConnectionVerificationResult {
   readonly baseUrl: SourceControlConnectionUrl;
   readonly apiUrl: SourceControlConnectionUrl;
   readonly identity: SourceControlConnectionIdentity;
+  readonly sshHost: SourceControlConnectionSshHost;
+  readonly sshPort: number;
   readonly serverVersion: string;
   readonly capabilities: SourceControlConnectionCapabilities;
 }
