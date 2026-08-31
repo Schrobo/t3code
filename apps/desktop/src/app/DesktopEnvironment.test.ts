@@ -130,6 +130,42 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("isolates packaged preview identity and state from Alpha", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        appVersion: "0.0.22-pr.42.abcdef0",
+        isPackaged: true,
+      });
+
+      assert.equal(environment.isDevelopment, false);
+      assert.equal(environment.isPreview, true);
+      assert.deepEqual(environment.branding, {
+        baseName: "T3 Code",
+        stageLabel: "Preview",
+        displayName: "T3 Code (Preview)",
+      });
+      assert.equal(environment.baseDir, "/Users/alice/.t3-preview");
+      assert.equal(environment.stateDir, "/Users/alice/.t3-preview/userdata");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code.preview");
+      assert.equal(environment.userDataDirName, "t3code-preview");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Preview)");
+      assert.equal(environment.linuxDesktopEntryName, "t3code-preview.desktop");
+      assert.equal(environment.linuxWmClass, "t3code-preview");
+    }),
+  );
+
+  it.effect("honors an explicit home for preview state", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { appVersion: "0.0.22-pr.42.abcdef0" },
+        { T3CODE_HOME: "/tmp/t3-preview-test" },
+      );
+
+      assert.equal(environment.baseDir, "/tmp/t3-preview-test");
+      assert.equal(environment.stateDir, "/tmp/t3-preview-test/userdata");
+    }),
+  );
+
   it.effect("uses a configured app user model id override", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

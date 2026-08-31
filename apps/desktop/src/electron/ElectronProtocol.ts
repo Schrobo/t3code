@@ -11,17 +11,22 @@ import * as Electron from "electron";
 export const DESKTOP_HOST = "app";
 export const DESKTOP_PRODUCTION_SCHEME = "t3code";
 export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+export const DESKTOP_PREVIEW_SCHEME = "t3code-preview";
 
-export function getDesktopScheme(isDevelopment: boolean): string {
-  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+export function getDesktopScheme(isDevelopment: boolean, isPreview = false): string {
+  return isDevelopment
+    ? DESKTOP_DEVELOPMENT_SCHEME
+    : isPreview
+      ? DESKTOP_PREVIEW_SCHEME
+      : DESKTOP_PRODUCTION_SCHEME;
 }
 
-export function getDesktopOrigin(isDevelopment: boolean): string {
-  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+export function getDesktopOrigin(isDevelopment: boolean, isPreview = false): string {
+  return `${getDesktopScheme(isDevelopment, isPreview)}://${DESKTOP_HOST}`;
 }
 
-export function getDesktopUrl(isDevelopment: boolean): string {
-  return `${getDesktopOrigin(isDevelopment)}/`;
+export function getDesktopUrl(isDevelopment: boolean, isPreview = false): string {
+  return `${getDesktopOrigin(isDevelopment, isPreview)}/`;
 }
 
 export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
@@ -129,6 +134,15 @@ export function registerDesktopSchemePrivilegesSync(): void {
         supportFetchAPI: true,
         corsEnabled: true,
         stream: true,
+      },
+    },
+    {
+      scheme: DESKTOP_PREVIEW_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
       },
     },
   ]);
