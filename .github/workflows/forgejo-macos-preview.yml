@@ -92,7 +92,14 @@ jobs:
             printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
             exit 1
           fi
-          shasum -a 256 "${dmg_files[0]}" > "${dmg_files[0]}.sha256"
+          dmg_file="${dmg_files[0]}"
+          dmg_directory="$(dirname "$dmg_file")"
+          dmg_name="$(basename "$dmg_file")"
+          (
+            cd "$dmg_directory"
+            shasum -a 256 "$dmg_name" > "$dmg_name.sha256"
+            shasum -a 256 -c "$dmg_name.sha256"
+          )
 
       - name: Upload preview artifact
         uses: actions/upload-artifact@v7
