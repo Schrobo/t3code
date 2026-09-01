@@ -1,6 +1,7 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  SourceControlConnection,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -11,6 +12,14 @@ import {
 } from "../sourceControlPresentation";
 
 export type GitActionIconName = "commit" | "push" | "pr";
+
+export function forgejoRepositoryCreateConnections(
+  connections: ReadonlyArray<SourceControlConnection>,
+): ReadonlyArray<SourceControlConnection> {
+  return connections.filter(
+    (connection) => connection.provider === "forgejo" && connection.capabilities.repositoryCreate,
+  );
+}
 
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
