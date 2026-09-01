@@ -2196,6 +2196,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    const isPreview = isDesktopPreviewVersion(version);
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2206,7 +2207,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: resolveDesktopProtocolSchemes(version),
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : isPreview
+          ? { identity: "-", hardenedRuntime: false }
+          : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
