@@ -1,8 +1,11 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { SourceControlConnection, type VcsStatusResult } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  forgejoRepositoryCreateConnections,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -11,6 +14,43 @@ import {
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
+
+const decodeConnection = Schema.decodeUnknownSync(SourceControlConnection);
+
+function forgejoConnection(repositoryCreate: boolean) {
+  return decodeConnection({
+    id: repositoryCreate
+      ? "00000000-0000-4000-8000-000000000001"
+      : "00000000-0000-4000-8000-000000000002",
+    provider: "forgejo",
+    displayName: repositoryCreate ? "Writable" : "Read only",
+    baseUrl: repositoryCreate ? "https://write.example.com" : "https://read.example.com",
+    apiUrl: repositoryCreate
+      ? "https://write.example.com/api/v1"
+      : "https://read.example.com/api/v1",
+    sshHost: repositoryCreate ? "write.example.com" : "read.example.com",
+    sshPort: 22,
+    identity: { login: "octo" },
+    serverVersion: "12.0.0",
+    capabilities: {
+      repositorySearch: true,
+      repositoryCreate,
+      changeRequestList: true,
+      changeRequestCreate: true,
+      changeRequestCheckout: true,
+    },
+    credentialConfigured: true,
+    verifiedAt: DateTime.makeUnsafe("2026-08-31T00:00:00.000Z"),
+  });
+}
+
+describe("Forgejo publish capabilities", () => {
+  it("offers repository creation only for capable connections", () => {
+    const writable = forgejoConnection(true);
+    const readOnly = forgejoConnection(false);
+    assert.deepEqual(forgejoRepositoryCreateConnections([readOnly, writable]), [writable]);
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {

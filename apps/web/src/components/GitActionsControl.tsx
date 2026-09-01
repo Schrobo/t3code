@@ -9,6 +9,8 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
+  SourceControlConnection,
+  SourceControlConnectionId,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
   SourceControlPublishRepositoryResult,
@@ -40,13 +42,20 @@ import {
   GlobeIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
+import {
+  AzureDevOpsIcon,
+  BitbucketIcon,
+  ForgejoIcon,
+  GitHubIcon,
+  GitLabIcon,
+} from "~/components/Icons";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  forgejoRepositoryCreateConnections,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -123,8 +132,19 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "forgejo"
 >;
+
+interface PublishProviderOption {
+  readonly key: string;
+  readonly value: PublishProviderKind;
+  readonly connectionId?: SourceControlConnectionId;
+  readonly label: string;
+  readonly description: string;
+  readonly host: string;
+  readonly pathPlaceholder: string;
+  readonly Icon: typeof GitHubIcon;
+}
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
 
@@ -172,6 +192,7 @@ const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepo
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {
+    key: "github",
     value: "github",
     label: "GitHub",
     description: "github.com",
@@ -180,6 +201,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     Icon: GitHubIcon,
   },
   {
+    key: "gitlab",
     value: "gitlab",
     label: "GitLab",
     description: "gitlab.com",
@@ -188,6 +210,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     Icon: GitLabIcon,
   },
   {
+    key: "bitbucket",
     value: "bitbucket",
     label: "Bitbucket",
     description: "bitbucket.org",
@@ -196,6 +219,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     Icon: BitbucketIcon,
   },
   {
+    key: "azure-devops",
     value: "azure-devops",
     label: "Azure DevOps",
     description: "dev.azure.com",
@@ -203,26 +227,27 @@ const PUBLISH_PROVIDER_OPTIONS = [
     pathPlaceholder: "project/repository",
     Icon: AzureDevOpsIcon,
   },
-] as const satisfies ReadonlyArray<{
-  readonly value: PublishProviderKind;
-  readonly label: string;
-  readonly description: string;
-  readonly host: string;
-  readonly pathPlaceholder: string;
-  readonly Icon: typeof GitHubIcon;
-}>;
-
-function publishProviderOption(provider: PublishProviderKind) {
-  return (
-    PUBLISH_PROVIDER_OPTIONS.find((option) => option.value === provider) ??
-    PUBLISH_PROVIDER_OPTIONS[0]
-  );
-}
+] as const satisfies ReadonlyArray<PublishProviderOption>;
 
 function isPublishProviderKind(
   provider: SourceControlProviderKind,
 ): provider is PublishProviderKind {
-  return PUBLISH_PROVIDER_OPTIONS.some((option) => option.value === provider);
+  return [...PUBLISH_PROVIDER_OPTIONS.map((option) => option.value), "forgejo"].includes(provider);
+}
+
+export function forgejoPublishProviderOptions(
+  connections: ReadonlyArray<SourceControlConnection>,
+): ReadonlyArray<PublishProviderOption> {
+  return forgejoRepositoryCreateConnections(connections).map((connection) => ({
+    key: `forgejo:${connection.id}`,
+    value: "forgejo",
+    connectionId: connection.id,
+    label: connection.displayName,
+    description: connection.baseUrl,
+    host: new URL(connection.baseUrl).host,
+    pathPlaceholder: "owner/repository",
+    Icon: ForgejoIcon,
+  }));
 }
 
 function getPublishProviderReadiness(input: {
@@ -397,8 +422,15 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           input: {},
         }),
   );
-  const [selectedPublishProvider, setSelectedPublishProvider] =
-    useState<PublishProviderKind | null>(null);
+  const sourceControlConnections = useEnvironmentQuery(
+    props.environmentId === null
+      ? null
+      : sourceControlEnvironment.connections({
+          environmentId: props.environmentId,
+          input: {},
+        }),
+  );
+  const [selectedPublishProviderKey, setSelectedPublishProviderKey] = useState<string | null>(null);
   const [publishRepositoryOverride, setPublishRepositoryOverride] = useState<string | null>(null);
   const [publishVisibility, setPublishVisibility] =
     useState<SourceControlRepositoryVisibility>("private");
@@ -419,7 +451,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   );
   const publishRepositoryAction = useSourceControlPublishRepositoryAction(sourceControlScope);
   const publishAccountByProvider = useMemo(() => {
-    const accounts: Record<PublishProviderKind, string | null> = {
+    const accounts: Partial<Record<PublishProviderKind, string | null>> = {
       github: null,
       gitlab: null,
       bitbucket: null,
@@ -432,47 +464,67 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     }
     return accounts;
   }, [sourceControlDiscovery.data]);
+  const publishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(
+    () => [
+      ...PUBLISH_PROVIDER_OPTIONS,
+      ...forgejoPublishProviderOptions(sourceControlConnections.data?.connections ?? []),
+    ],
+    [sourceControlConnections.data],
+  );
   const publishProviderReadiness = useMemo(() => {
     const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
     return Object.fromEntries(
-      PUBLISH_PROVIDER_OPTIONS.map((option) => [
-        option.value,
-        getPublishProviderReadiness({
-          provider: option.value,
-          sourceControlProviders,
-        }),
+      publishProviderOptions.map((option) => [
+        option.key,
+        option.value === "forgejo"
+          ? { ready: true, hint: null }
+          : getPublishProviderReadiness({
+              provider: option.value,
+              sourceControlProviders,
+            }),
       ]),
-    ) as Record<PublishProviderKind, { readonly ready: boolean; readonly hint: string | null }>;
-  }, [sourceControlDiscovery.data]);
+    ) as Record<string, { readonly ready: boolean; readonly hint: string | null }>;
+  }, [publishProviderOptions, sourceControlDiscovery.data]);
   const hasReadyPublishProvider = useMemo(
-    () => PUBLISH_PROVIDER_OPTIONS.some((option) => publishProviderReadiness[option.value].ready),
-    [publishProviderReadiness],
+    () => publishProviderOptions.some((option) => publishProviderReadiness[option.key]?.ready),
+    [publishProviderOptions, publishProviderReadiness],
   );
   const sortedPublishProviderOptions = useMemo(
     () =>
-      PUBLISH_PROVIDER_OPTIONS.toSorted((left, right) => {
-        const leftReady = publishProviderReadiness[left.value].ready;
-        const rightReady = publishProviderReadiness[right.value].ready;
+      publishProviderOptions.toSorted((left, right) => {
+        const leftReady = publishProviderReadiness[left.key]?.ready ?? false;
+        const rightReady = publishProviderReadiness[right.key]?.ready ?? false;
         if (leftReady !== rightReady) {
           return leftReady ? -1 : 1;
         }
         return left.label.localeCompare(right.label);
       }),
-    [publishProviderReadiness],
+    [publishProviderOptions, publishProviderReadiness],
   );
   const firstReadyPublishProvider = sortedPublishProviderOptions.find(
-    (option) => publishProviderReadiness[option.value].ready,
-  )?.value;
-  const publishProvider =
-    selectedPublishProvider !== null && publishProviderReadiness[selectedPublishProvider].ready
-      ? selectedPublishProvider
-      : (firstReadyPublishProvider ?? selectedPublishProvider ?? "github");
-  const selectedPublishProviderReadiness = publishProviderReadiness[publishProvider];
-  const publishRepositoryPrefill = publishAccountByProvider[publishProvider]
-    ? `${publishAccountByProvider[publishProvider]}/`
-    : "";
+    (option) => publishProviderReadiness[option.key]?.ready,
+  );
+  const currentPublishProvider: PublishProviderOption =
+    publishProviderOptions.find(
+      (option) =>
+        option.key === selectedPublishProviderKey && publishProviderReadiness[option.key]?.ready,
+    ) ??
+    firstReadyPublishProvider ??
+    publishProviderOptions[0] ??
+    PUBLISH_PROVIDER_OPTIONS[0];
+  const publishProvider = currentPublishProvider.value;
+  const selectedPublishProviderReadiness = publishProviderReadiness[currentPublishProvider.key] ?? {
+    ready: false,
+    hint: "Configure a source-control provider first.",
+  };
+  const publishAccount =
+    publishProvider === "forgejo"
+      ? (sourceControlConnections.data?.connections.find(
+          (connection) => connection.id === currentPublishProvider.connectionId,
+        )?.identity.login ?? null)
+      : (publishAccountByProvider[publishProvider] ?? null);
+  const publishRepositoryPrefill = publishAccount ? `${publishAccount}/` : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
-  const currentPublishProvider = publishProviderOption(publishProvider);
   const publishHost = currentPublishProvider.host;
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
@@ -503,6 +555,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     void (async () => {
       const result = await publishRepositoryAction.run({
         provider: publishProvider,
+        ...(currentPublishProvider.connectionId
+          ? { connectionId: currentPublishProvider.connectionId }
+          : {}),
         repository: publishRepository.trim(),
         visibility: publishVisibility,
         remoteName: publishRemoteName.trim() || "origin",
@@ -527,6 +582,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     props.environmentId,
     props.gitCwd,
     publishProtocol,
+    currentPublishProvider.connectionId,
     publishProvider,
     publishRemoteName,
     publishRepository,
@@ -628,21 +684,24 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   Provider
                 </span>
                 <RadioGroup
-                  value={publishProvider}
+                  value={currentPublishProvider.key}
                   onValueChange={(value) => {
-                    setSelectedPublishProvider(value as PublishProviderKind);
+                    setSelectedPublishProviderKey(value);
                     setPublishRepositoryOverride(null);
                   }}
                   aria-labelledby="publish-provider-cards-label"
                   className="grid grid-cols-2 gap-2.5"
                 >
                   {sortedPublishProviderOptions.map((option) => {
-                    const readiness = publishProviderReadiness[option.value];
-                    const isSelected = publishProvider === option.value && readiness.ready;
+                    const readiness = publishProviderReadiness[option.key] ?? {
+                      ready: false,
+                      hint: "Provider unavailable.",
+                    };
+                    const isSelected = currentPublishProvider.key === option.key && readiness.ready;
                     if (!readiness.ready) {
                       return (
                         <div
-                          key={option.value}
+                          key={option.key}
                           className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
                         >
                           <option.Icon
@@ -680,8 +739,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
                     return (
                       <RadioPrimitive.Root
-                        key={option.value}
-                        value={option.value}
+                        key={option.key}
+                        value={option.key}
                         className={cn(
                           "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
                           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",

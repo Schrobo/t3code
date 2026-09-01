@@ -48,6 +48,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AzureDevOpsIcon,
   BitbucketIcon,
+  ForgejoIcon,
   GitHubIcon,
   GitIcon,
   GitLabIcon,
@@ -56,6 +57,7 @@ import {
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
+import { ForgejoConnectionsSettings } from "./ForgejoConnectionsSettings";
 import {
   PolicyTooltip,
   SettingResetButton,
@@ -76,6 +78,7 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   gitlab: GitLabIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
+  forgejo: ForgejoIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
@@ -550,6 +553,7 @@ export function SourceControlSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SharedSettingsMismatchAlert />
+      <ForgejoConnectionsSettings environmentId={environmentId} />
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />

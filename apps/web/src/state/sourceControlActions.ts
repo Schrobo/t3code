@@ -14,6 +14,7 @@ import type {
   GitResolvePullRequestResult,
   GitStackedAction,
   SourceControlCloneProtocol,
+  SourceControlConnectionId,
   SourceControlRepositoryVisibility,
   ThreadId,
 } from "@t3tools/contracts";
@@ -267,7 +268,8 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
   );
   const action = useCallback(
     async (input: {
-      provider: "github" | "gitlab" | "bitbucket" | "azure-devops";
+      provider: "github" | "gitlab" | "bitbucket" | "azure-devops" | "forgejo";
+      connectionId?: SourceControlConnectionId;
       repository: string;
       visibility: SourceControlRepositoryVisibility;
       remoteName: string;

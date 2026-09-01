@@ -28,6 +28,37 @@ export function createSourceControlEnvironmentAtoms<R, E>(
       label: "environment-data:source-control:repository-search",
       tag: WS_METHODS.sourceControlSearchRepositories,
     }),
+    connections: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:source-control:connections",
+      tag: WS_METHODS.sourceControlConnectionsList,
+    }),
+    addConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:add-connection",
+      tag: WS_METHODS.sourceControlConnectionsAdd,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    verifyConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:verify-connection",
+      tag: WS_METHODS.sourceControlConnectionsVerify,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    removeConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:remove-connection",
+      tag: WS_METHODS.sourceControlConnectionsRemove,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     cloneRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:clone-repository",
       tag: WS_METHODS.sourceControlCloneRepository,

@@ -15,6 +15,28 @@ export const GitHubIcon: Icon = (props) => (
   </svg>
 );
 
+/**
+ * Forgejo logo by Caesar Schinas, adapted to `currentColor`.
+ * Source: https://codeberg.org/forgejo/meta/src/branch/readme/branding/README.md
+ * License: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+ */
+export const ForgejoIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 212 212" fill="none">
+    <g
+      transform="translate(6 6)"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M58 168V70a50 50 0 0 1 50-50h20" strokeWidth="15" />
+      <path d="M58 168v-30a50 50 0 0 1 50-50h20" strokeWidth="15" />
+      <circle cx="142" cy="20" r="18" strokeWidth="15" />
+      <circle cx="142" cy="88" r="18" strokeWidth="15" />
+      <circle cx="58" cy="180" r="18" strokeWidth="15" />
+    </g>
+  </svg>
+);
+
 export const GitIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 256 256">
     <path

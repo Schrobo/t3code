@@ -1,7 +1,7 @@
 import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";
+  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "forgejo" | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -65,7 +65,7 @@ const BITBUCKET_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
 };
 
 const FORGEJO_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
-  icon: "change-request",
+  icon: "forgejo",
   providerName: "Forgejo",
   shortName: "PR",
   longName: "pull request",
