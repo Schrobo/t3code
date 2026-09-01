@@ -363,9 +363,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(preview.appId, "com.t3tools.t3code.preview");
       assert.equal(preview.productName, "T3 Code (Preview)");
       assert.equal(preview.artifactName, "T3-Code-Preview-${version}-${arch}.${ext}");
-      assert.deepStrictEqual((preview.mac as Record<string, unknown>).protocols, [
+      const previewMac = preview.mac as Record<string, unknown>;
+      assert.equal(previewMac.identity, "-");
+      assert.equal(previewMac.hardenedRuntime, false);
+      assert.deepStrictEqual(previewMac.protocols, [
         { name: "T3 Code", schemes: ["t3code-preview"] },
       ]);
+      assert.notProperty(release.mac as Record<string, unknown>, "identity");
+      assert.notProperty(release.mac as Record<string, unknown>, "hardenedRuntime");
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",

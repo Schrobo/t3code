@@ -87,6 +87,13 @@ jobs:
             --verbose
 
           shopt -s nullglob
+          preview_apps=(release/mac*/T3\ Code\ \(Preview\).app)
+          if (( ${#preview_apps[@]} != 1 )); then
+            printf 'Expected one preview app bundle, found %s.\n' "${#preview_apps[@]}" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "${preview_apps[0]}"
+
           dmg_files=(release/*.dmg)
           if (( ${#dmg_files[@]} != 1 )); then
             printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
