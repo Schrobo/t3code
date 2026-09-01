@@ -87,19 +87,26 @@ jobs:
             --verbose
 
           shopt -s nullglob
-          preview_apps=(release/mac*/T3\ Code\ \(Preview\).app)
-          if (( ${#preview_apps[@]} != 1 )); then
-            printf 'Expected one preview app bundle, found %s.\n' "${#preview_apps[@]}" >&2
-            exit 1
-          fi
-          codesign --verify --deep --strict --verbose=2 "${preview_apps[0]}"
-
           dmg_files=(release/*.dmg)
           if (( ${#dmg_files[@]} != 1 )); then
             printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
             exit 1
           fi
           dmg_file="${dmg_files[0]}"
+          mount_directory="$(mktemp -d)"
+          cleanup_preview_mount() {
+            hdiutil detach "$mount_directory" >/dev/null 2>&1 || true
+            rmdir "$mount_directory" >/dev/null 2>&1 || true
+          }
+          trap cleanup_preview_mount EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_directory" "$dmg_file"
+          preview_app="$mount_directory/T3 Code (Preview).app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$preview_app/Contents/Info.plist")" = "com.t3tools.t3code.preview"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$preview_app/Contents/Info.plist")" = "$PREVIEW_VERSION"
+          codesign --verify --deep --strict --verbose=2 "$preview_app"
+          cleanup_preview_mount
+          trap - EXIT
+
           dmg_directory="$(dirname "$dmg_file")"
           dmg_name="$(basename "$dmg_file")"
           (
