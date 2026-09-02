@@ -166,6 +166,7 @@ import {
 } from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
+  DesktopUpdateCommitInput,
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
@@ -195,6 +196,17 @@ import {
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
+  SourceControlConnectionAddInput,
+  SourceControlConnectionAddResult,
+  SourceControlConnectionError,
+  SourceControlConnectionListInput,
+  SourceControlConnectionListResult,
+  SourceControlConnectionRemoveInput,
+  SourceControlConnectionRemoveResult,
+  SourceControlConnectionReplaceCredentialInput,
+  SourceControlConnectionUpdateInput,
+  SourceControlConnectionVerifyInput,
+  SourceControlConnectionVerifyResult,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -203,6 +215,8 @@ import {
   SourceControlRepositoryError,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
+  SourceControlRepositorySearchInput,
+  SourceControlRepositorySearchResult,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 
@@ -276,6 +290,7 @@ export const WS_METHODS = {
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
+  serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
@@ -317,8 +332,15 @@ export const WS_METHODS = {
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
+  sourceControlSearchRepositories: "sourceControl.searchRepositories",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+  sourceControlConnectionsList: "sourceControl.connections.list",
+  sourceControlConnectionsAdd: "sourceControl.connections.add",
+  sourceControlConnectionsUpdate: "sourceControl.connections.update",
+  sourceControlConnectionsVerify: "sourceControl.connections.verify",
+  sourceControlConnectionsReplaceCredential: "sourceControl.connections.replaceCredential",
+  sourceControlConnectionsRemove: "sourceControl.connections.remove",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -392,6 +414,12 @@ export const WsServerUpdateServerWithProgressRpc = Rpc.make(
     stream: true,
   },
 );
+
+export const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUpdate, {
+  payload: DesktopUpdateCommitInput,
+  success: ServerSelfUpdateResult,
+  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+});
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
@@ -621,6 +649,15 @@ export const WsSourceControlLookupRepositoryRpc = Rpc.make(
   },
 );
 
+export const WsSourceControlSearchRepositoriesRpc = Rpc.make(
+  WS_METHODS.sourceControlSearchRepositories,
+  {
+    payload: SourceControlRepositorySearchInput,
+    success: SourceControlRepositorySearchResult,
+    error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
   payload: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
@@ -633,6 +670,59 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     payload: SourceControlPublishRepositoryInput,
     success: SourceControlPublishRepositoryResult,
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  },
+);
+
+const SourceControlConnectionRpcError = Schema.Union([
+  SourceControlConnectionError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsSourceControlConnectionsListRpc = Rpc.make(WS_METHODS.sourceControlConnectionsList, {
+  payload: SourceControlConnectionListInput,
+  success: SourceControlConnectionListResult,
+  error: SourceControlConnectionRpcError,
+});
+
+export const WsSourceControlConnectionsAddRpc = Rpc.make(WS_METHODS.sourceControlConnectionsAdd, {
+  payload: SourceControlConnectionAddInput,
+  success: SourceControlConnectionAddResult,
+  error: SourceControlConnectionRpcError,
+});
+
+export const WsSourceControlConnectionsUpdateRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsUpdate,
+  {
+    payload: SourceControlConnectionUpdateInput,
+    success: SourceControlConnectionVerifyResult,
+    error: SourceControlConnectionRpcError,
+  },
+);
+
+export const WsSourceControlConnectionsVerifyRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsVerify,
+  {
+    payload: SourceControlConnectionVerifyInput,
+    success: SourceControlConnectionVerifyResult,
+    error: SourceControlConnectionRpcError,
+  },
+);
+
+export const WsSourceControlConnectionsReplaceCredentialRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsReplaceCredential,
+  {
+    payload: SourceControlConnectionReplaceCredentialInput,
+    success: SourceControlConnectionVerifyResult,
+    error: SourceControlConnectionRpcError,
+  },
+);
+
+export const WsSourceControlConnectionsRemoveRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsRemove,
+  {
+    payload: SourceControlConnectionRemoveInput,
+    success: SourceControlConnectionRemoveResult,
+    error: SourceControlConnectionRpcError,
   },
 );
 
@@ -1033,6 +1123,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
+  WsServerCommitDesktopUpdateRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
@@ -1068,8 +1159,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
   WsSourceControlLookupRepositoryRpc,
+  WsSourceControlSearchRepositoriesRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsSourceControlConnectionsListRpc,
+  WsSourceControlConnectionsAddRpc,
+  WsSourceControlConnectionsUpdateRpc,
+  WsSourceControlConnectionsVerifyRpc,
+  WsSourceControlConnectionsReplaceCredentialRpc,
+  WsSourceControlConnectionsRemoveRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

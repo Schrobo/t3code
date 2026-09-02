@@ -53,6 +53,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+const DESKTOP_PREVIEW_APP_ID = "com.t3tools.t3code.preview";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2075,8 +2076,22 @@ export function resolveDesktopUpdateChannel(version: string): "latest" | "nightl
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
-function isDesktopPreviewVersion(version: string): boolean {
+export function isDesktopPreviewVersion(version: string): boolean {
   return /-pr\./.test(version);
+}
+
+export function resolveDesktopAppId(version: string): string {
+  return isDesktopPreviewVersion(version) ? DESKTOP_PREVIEW_APP_ID : DESKTOP_APP_ID;
+}
+
+export function resolveDesktopArtifactName(version: string): string {
+  return isDesktopPreviewVersion(version)
+    ? "T3-Code-Preview-${version}-${arch}.${ext}"
+    : "T3-Code-${version}-${arch}.${ext}";
+}
+
+export function resolveDesktopProtocolSchemes(version: string): ReadonlyArray<string> {
+  return isDesktopPreviewVersion(version) ? ["t3code-preview"] : ["t3code", "t3code-dev"];
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
@@ -2117,6 +2132,10 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
+  if (isDesktopPreviewVersion(version)) {
+    return "T3 Code (Preview)";
+  }
+
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -2141,9 +2160,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(version),
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: resolveDesktopArtifactName(version),
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS, ...(platform === "mac" ? MAC_FILE_EXCLUSIONS : [])],
     directories: {
@@ -2177,6 +2196,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    const isPreview = isDesktopPreviewVersion(version);
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2184,10 +2204,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: resolveDesktopProtocolSchemes(version),
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : isPreview
+          ? { identity: "-", hardenedRuntime: false }
+          : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -2232,7 +2256,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: resolveDesktopProtocolSchemes(version),
         },
       ],
       desktop: {

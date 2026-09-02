@@ -1,12 +1,301 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import * as SchemaTransformation from "effect/SchemaTransformation";
+import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
+
+const SOURCE_CONTROL_CONNECTION_URL_MAX_LENGTH = 2_048;
+const SOURCE_CONTROL_CONNECTION_TOKEN_MAX_LENGTH = 8_192;
+
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  if (hostname === "[::1]" || hostname === "::1") return true;
+  const octets = hostname.split(".");
+  return (
+    octets.length === 4 &&
+    octets[0] === "127" &&
+    octets.every((octet) => /^\d{1,3}$/u.test(octet) && Number(octet) <= 255)
+  );
+}
+
+function isSafeSourceControlConnectionUrl(value: string): boolean | string {
+  try {
+    const url = new URL(value);
+    if (url.username !== "" || url.password !== "") return "URL credentials are not allowed.";
+    if (url.search !== "") return "URL query parameters are not allowed.";
+    if (url.hash !== "") return "URL fragments are not allowed.";
+    if (url.protocol === "https:") return true;
+    if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) return true;
+    return "URLs must use HTTPS. HTTP is allowed only for loopback hosts.";
+  } catch {
+    return "Expected an absolute source-control URL.";
+  }
+}
+
+function normalizeSourceControlConnectionUrl(value: string): string {
+  const url = new URL(value);
+  url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
+  return url.toString();
+}
+
+const SafeSourceControlConnectionUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(SOURCE_CONTROL_CONNECTION_URL_MAX_LENGTH),
+  Schema.makeFilter(isSafeSourceControlConnectionUrl),
+);
+
+export const SourceControlConnectionUrl = SafeSourceControlConnectionUrl.pipe(
+  Schema.decodeTo(
+    SafeSourceControlConnectionUrl,
+    SchemaTransformation.transform({
+      decode: normalizeSourceControlConnectionUrl,
+      encode: normalizeSourceControlConnectionUrl,
+    }),
+  ),
+  Schema.brand("SourceControlConnectionUrl"),
+);
+export type SourceControlConnectionUrl = typeof SourceControlConnectionUrl.Type;
+
+export const SourceControlConnectionId = TrimmedNonEmptyString.check(Schema.isUUID(4)).pipe(
+  Schema.brand("SourceControlConnectionId"),
+);
+export type SourceControlConnectionId = typeof SourceControlConnectionId.Type;
+
+export const SourceControlConnectionProviderKind = Schema.Literal("forgejo");
+export type SourceControlConnectionProviderKind = typeof SourceControlConnectionProviderKind.Type;
+
+export const SourceControlConnectionCapabilities = Schema.Struct({
+  repositorySearch: Schema.Boolean,
+  repositoryCreate: Schema.Boolean,
+  changeRequestList: Schema.Boolean,
+  changeRequestCreate: Schema.Boolean,
+  changeRequestCheckout: Schema.Boolean,
+});
+export type SourceControlConnectionCapabilities = typeof SourceControlConnectionCapabilities.Type;
+
+export const SourceControlConnectionIdentity = Schema.Struct({
+  login: TrimmedNonEmptyString,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  avatarUrl: Schema.optional(TrimmedNonEmptyString),
+});
+export type SourceControlConnectionIdentity = typeof SourceControlConnectionIdentity.Type;
+
+export const SourceControlConnectionSshHost = TrimmedNonEmptyString.pipe(
+  Schema.decodeTo(
+    TrimmedNonEmptyString,
+    SchemaTransformation.transform({
+      decode: (host) => host.toLowerCase(),
+      encode: (host) => host.toLowerCase(),
+    }),
+  ),
+  Schema.brand("SourceControlConnectionSshHost"),
+);
+export type SourceControlConnectionSshHost = typeof SourceControlConnectionSshHost.Type;
+
+export const SourceControlConnection = Schema.Struct({
+  id: SourceControlConnectionId,
+  provider: SourceControlConnectionProviderKind,
+  displayName: TrimmedNonEmptyString,
+  baseUrl: SourceControlConnectionUrl,
+  apiUrl: SourceControlConnectionUrl,
+  sshHost: SourceControlConnectionSshHost,
+  sshPort: PortSchema,
+  identity: SourceControlConnectionIdentity,
+  serverVersion: TrimmedNonEmptyString,
+  capabilities: SourceControlConnectionCapabilities,
+  credentialConfigured: Schema.Literal(true),
+  verifiedAt: Schema.DateTimeUtc,
+});
+export type SourceControlConnection = typeof SourceControlConnection.Type;
+
+const SourceControlConnectionToken = Schema.String.check(
+  Schema.isMaxLength(SOURCE_CONTROL_CONNECTION_TOKEN_MAX_LENGTH),
+  Schema.makeFilter((token) => token.trim().length > 0 || "A credential token is required."),
+);
+
+export const SourceControlConnectionAddInput = Schema.Struct({
+  provider: SourceControlConnectionProviderKind,
+  displayName: TrimmedNonEmptyString,
+  baseUrl: SourceControlConnectionUrl,
+  apiUrl: Schema.optional(SourceControlConnectionUrl),
+  sshHost: Schema.optional(SourceControlConnectionSshHost),
+  sshPort: Schema.optional(PortSchema),
+  token: SourceControlConnectionToken,
+});
+export type SourceControlConnectionAddInput = typeof SourceControlConnectionAddInput.Type;
+
+export const SourceControlConnectionUpdateInput = Schema.Struct({
+  id: SourceControlConnectionId,
+  displayName: TrimmedNonEmptyString,
+  baseUrl: SourceControlConnectionUrl,
+  apiUrl: Schema.optional(SourceControlConnectionUrl),
+  sshHost: Schema.optional(SourceControlConnectionSshHost),
+  sshPort: Schema.optional(PortSchema),
+});
+export type SourceControlConnectionUpdateInput = typeof SourceControlConnectionUpdateInput.Type;
+
+export const SourceControlConnectionReplaceCredentialInput = Schema.Struct({
+  id: SourceControlConnectionId,
+  token: SourceControlConnectionToken,
+});
+export type SourceControlConnectionReplaceCredentialInput =
+  typeof SourceControlConnectionReplaceCredentialInput.Type;
+
+export const SourceControlConnectionListInput = Schema.Struct({});
+export type SourceControlConnectionListInput = typeof SourceControlConnectionListInput.Type;
+
+export const SourceControlConnectionVerifyInput = Schema.Struct({
+  id: SourceControlConnectionId,
+});
+export type SourceControlConnectionVerifyInput = typeof SourceControlConnectionVerifyInput.Type;
+
+export const SourceControlConnectionRemoveInput = Schema.Struct({
+  id: SourceControlConnectionId,
+});
+export type SourceControlConnectionRemoveInput = typeof SourceControlConnectionRemoveInput.Type;
+
+export const SourceControlConnectionListResult = Schema.Struct({
+  connections: Schema.Array(SourceControlConnection),
+});
+export type SourceControlConnectionListResult = typeof SourceControlConnectionListResult.Type;
+
+export const SourceControlConnectionAddResult = Schema.Struct({
+  connection: SourceControlConnection,
+});
+export type SourceControlConnectionAddResult = typeof SourceControlConnectionAddResult.Type;
+
+export const SourceControlConnectionVerifyResult = Schema.Struct({
+  connection: SourceControlConnection,
+});
+export type SourceControlConnectionVerifyResult = typeof SourceControlConnectionVerifyResult.Type;
+
+export const SourceControlConnectionRemoveResult = Schema.Struct({
+  id: SourceControlConnectionId,
+});
+export type SourceControlConnectionRemoveResult = typeof SourceControlConnectionRemoveResult.Type;
+
+export class SourceControlConnectionInvalidUrlError extends Schema.TaggedErrorClass<SourceControlConnectionInvalidUrlError>()(
+  "SourceControlConnectionInvalidUrlError",
+  {
+    field: Schema.Literals(["baseUrl", "apiUrl"]),
+    reason: Schema.Literals(["invalid", "credentials", "query", "fragment", "insecure"]),
+  },
+) {
+  override get message(): string {
+    return `The source-control ${this.field} is invalid (${this.reason}).`;
+  }
+}
+
+export class SourceControlConnectionNotFoundError extends Schema.TaggedErrorClass<SourceControlConnectionNotFoundError>()(
+  "SourceControlConnectionNotFoundError",
+  {
+    connectionId: Schema.optional(SourceControlConnectionId),
+    origin: Schema.optional(SourceControlConnectionUrl),
+  },
+) {
+  override get message(): string {
+    return "The source-control connection was not found.";
+  }
+}
+
+export class SourceControlConnectionAmbiguousError extends Schema.TaggedErrorClass<SourceControlConnectionAmbiguousError>()(
+  "SourceControlConnectionAmbiguousError",
+  {
+    origin: SourceControlConnectionUrl,
+    connectionIds: Schema.Array(SourceControlConnectionId),
+  },
+) {
+  override get message(): string {
+    return "Multiple source-control connections match this origin.";
+  }
+}
+
+export class SourceControlConnectionAlreadyExistsError extends Schema.TaggedErrorClass<SourceControlConnectionAlreadyExistsError>()(
+  "SourceControlConnectionAlreadyExistsError",
+  {
+    connectionId: SourceControlConnectionId,
+  },
+) {
+  override get message(): string {
+    return "The source-control connection already exists.";
+  }
+}
+
+export class SourceControlConnectionAuthenticationError extends Schema.TaggedErrorClass<SourceControlConnectionAuthenticationError>()(
+  "SourceControlConnectionAuthenticationError",
+  {
+    provider: SourceControlConnectionProviderKind,
+    connectionId: Schema.optional(SourceControlConnectionId),
+  },
+) {
+  override get message(): string {
+    return `Authentication failed for the ${this.provider} connection.`;
+  }
+}
+
+export class SourceControlConnectionIncompatibleVersionError extends Schema.TaggedErrorClass<SourceControlConnectionIncompatibleVersionError>()(
+  "SourceControlConnectionIncompatibleVersionError",
+  {
+    provider: SourceControlConnectionProviderKind,
+    serverVersion: TrimmedNonEmptyString,
+  },
+) {
+  override get message(): string {
+    return `The ${this.provider} server version is not supported.`;
+  }
+}
+
+export class SourceControlConnectionProviderUnavailableError extends Schema.TaggedErrorClass<SourceControlConnectionProviderUnavailableError>()(
+  "SourceControlConnectionProviderUnavailableError",
+  {
+    provider: SourceControlConnectionProviderKind,
+  },
+) {
+  override get message(): string {
+    return `No verifier is registered for ${this.provider}.`;
+  }
+}
+
+export const SourceControlConnectionPersistenceOperation = Schema.Literals([
+  "read-metadata",
+  "decode-metadata",
+  "write-metadata",
+  "read-credential",
+  "write-credential",
+  "remove-credential",
+  "rollback-credential",
+  "generate-id",
+]);
+export type SourceControlConnectionPersistenceOperation =
+  typeof SourceControlConnectionPersistenceOperation.Type;
+
+export class SourceControlConnectionPersistenceError extends Schema.TaggedErrorClass<SourceControlConnectionPersistenceError>()(
+  "SourceControlConnectionPersistenceError",
+  {
+    operation: SourceControlConnectionPersistenceOperation,
+  },
+) {
+  override get message(): string {
+    return `Failed to persist source-control connections (${this.operation}).`;
+  }
+}
+
+export const SourceControlConnectionError = Schema.Union([
+  SourceControlConnectionInvalidUrlError,
+  SourceControlConnectionNotFoundError,
+  SourceControlConnectionAmbiguousError,
+  SourceControlConnectionAlreadyExistsError,
+  SourceControlConnectionAuthenticationError,
+  SourceControlConnectionIncompatibleVersionError,
+  SourceControlConnectionProviderUnavailableError,
+  SourceControlConnectionPersistenceError,
+]);
+export type SourceControlConnectionError = typeof SourceControlConnectionError.Type;
 
 export const SourceControlProviderKind = Schema.Literals([
   "github",
   "gitlab",
   "azure-devops",
   "bitbucket",
+  "forgejo",
   "unknown",
 ]);
 export type SourceControlProviderKind = typeof SourceControlProviderKind.Type;
@@ -51,6 +340,7 @@ export type SourceControlCloneProtocol = typeof SourceControlCloneProtocol.Type;
 
 export const SourceControlRepositoryInfo = Schema.Struct({
   provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
   nameWithOwner: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
@@ -59,6 +349,7 @@ export type SourceControlRepositoryInfo = typeof SourceControlRepositoryInfo.Typ
 
 export const SourceControlRepositoryLookupInput = Schema.Struct({
   provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
   repository: TrimmedNonEmptyString,
   cwd: Schema.optional(TrimmedNonEmptyString),
 });
@@ -66,6 +357,7 @@ export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryL
 
 export const SourceControlCloneRepositoryInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
+  connectionId: Schema.optional(SourceControlConnectionId),
   repository: Schema.optional(TrimmedNonEmptyString),
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
   destinationPath: TrimmedNonEmptyString,
@@ -83,6 +375,7 @@ export type SourceControlCloneRepositoryResult = typeof SourceControlCloneReposi
 export const SourceControlPublishRepositoryInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
   repository: TrimmedNonEmptyString,
   visibility: SourceControlRepositoryVisibility,
   remoteName: Schema.optional(TrimmedNonEmptyString),
@@ -102,6 +395,30 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
   status: SourceControlPublishStatus,
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
+
+export const SourceControlRepositorySearchItem = Schema.Struct({
+  provider: SourceControlProviderKind,
+  connectionId: SourceControlConnectionId,
+  nameWithOwner: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  sshUrl: TrimmedNonEmptyString,
+  visibility: SourceControlRepositoryVisibility,
+  defaultBranch: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type SourceControlRepositorySearchItem = typeof SourceControlRepositorySearchItem.Type;
+
+export const SourceControlRepositorySearchInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  connectionId: Schema.optional(SourceControlConnectionId),
+  query: Schema.String,
+  limit: Schema.optional(PositiveInt),
+});
+export type SourceControlRepositorySearchInput = typeof SourceControlRepositorySearchInput.Type;
+
+export const SourceControlRepositorySearchResult = Schema.Struct({
+  repositories: Schema.Array(SourceControlRepositorySearchItem),
+});
+export type SourceControlRepositorySearchResult = typeof SourceControlRepositorySearchResult.Type;
 
 export const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
 export type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;

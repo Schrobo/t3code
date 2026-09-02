@@ -894,6 +894,89 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("omits routine setup updates before work starts and after later turn activity", () => {
+    const setupActivities = [
+      makeActivity({
+        id: "setup-requested",
+        kind: "setup-script.requested",
+        summary: "Preparing setup script",
+        tone: "info",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "setup-started",
+        kind: "setup-script.started",
+        summary: "Setup script started",
+        tone: "info",
+        sequence: 2,
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(setupActivities)).toEqual([]);
+    expect(
+      deriveWorkLogEntries([
+        ...setupActivities,
+        makeActivity({
+          id: "first-turn-tool",
+          kind: "tool.completed",
+          summary: "Read project files",
+          turnId: "turn-1",
+          sequence: 3,
+        }),
+        makeActivity({
+          id: "later-turn-tool",
+          kind: "tool.completed",
+          summary: "Ran tests",
+          turnId: "turn-2",
+          sequence: 4,
+        }),
+      ]).map((entry) => entry.id),
+    ).toEqual(["first-turn-tool", "later-turn-tool"]);
+  });
+
+  it("preserves setup failures and unrelated info without a turn id", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "setup-requested",
+        kind: "setup-script.requested",
+        summary: "Preparing setup script",
+        tone: "info",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "setup-failed",
+        kind: "setup-script.failed",
+        summary: "Setup script failed to start",
+        tone: "error",
+        payload: { detail: "Could not start the setup terminal" },
+        sequence: 2,
+      }),
+      makeActivity({
+        id: "runtime-notice",
+        kind: "runtime.warning",
+        summary: "Reconnecting to provider",
+        tone: "info",
+        sequence: 3,
+      }),
+    ]);
+
+    expect(entries).toMatchObject([
+      {
+        id: "setup-failed",
+        label: "Setup script failed to start",
+        tone: "error",
+        detail: "Could not start the setup terminal",
+        turnId: null,
+      },
+      {
+        id: "runtime-notice",
+        label: "Reconnecting to provider",
+        tone: "info",
+        turnId: null,
+      },
+    ]);
+  });
+
   it("drops runtime warnings with no displayable content, keeps ones with a preview", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1567,6 +1650,44 @@ describe("deriveWorkLogEntries", () => {
       toolTitle: "Read File",
       detail: 'import * as Effect from "effect/Effect"',
       itemType: "dynamic_tool_call",
+    });
+  });
+
+  it("keeps viewed image metadata while collapsing a streamed Claude Read", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "image-read-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Image view",
+        payload: {
+          toolCallId: "tool-read-image",
+          itemType: "image_view",
+          detail: `${imagePath.slice(0, 177)}...`,
+          data: { imagePath },
+        },
+      }),
+      makeActivity({
+        id: "image-read-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          toolCallId: "tool-read-image",
+          itemType: "image_view",
+          detail: `${imagePath.slice(0, 177)}...`,
+          data: {},
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "image-read-complete",
+      itemType: "image_view",
+      viewedImagePath: imagePath,
     });
   });
 

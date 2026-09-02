@@ -1,0 +1,189 @@
+name: Forgejo fork macOS preview
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forgejo-macos-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned macOS Apple Silicon preview
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/aarch64-apple-darwin/release/t3-resource-monitor
+          key: resource-monitor-aarch64-apple-darwin-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - id: version
+        name: Set preview version and public configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          read -r nightly_sha nightly_ref < <(
+            git ls-remote --refs --sort=-version:refname https://github.com/pingdotgg/t3code.git 'refs/tags/v*-nightly.*' |
+              head -n 1
+          )
+          if [[ -z "$nightly_sha" || -z "$nightly_ref" ]]; then
+            echo "Could not resolve the latest official T3 Code nightly tag." >&2
+            exit 1
+          fi
+          nightly_tag="${nightly_ref#refs/tags/}"
+          nightly_commit_ref="refs/t3code-upstream-nightly/$nightly_tag"
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$nightly_ref:$nightly_commit_ref"
+          if ! git merge-base --is-ancestor "$nightly_commit_ref" HEAD; then
+            echo "Branch is not based on the latest official nightly tag: $nightly_tag" >&2
+            exit 1
+          fi
+
+          nightly_version="${nightly_tag#v}"
+          base_version="${nightly_version%%-nightly.*}"
+          short_sha="${GITHUB_SHA:0:7}"
+          preview_version="${base_version}-pr.${GITHUB_RUN_NUMBER}.${short_sha}"
+          node scripts/update-release-package-versions.ts "$preview_version"
+          cp .env.example .env
+
+          echo "nightly_tag=$nightly_tag" >> "$GITHUB_OUTPUT"
+          echo "version=$preview_version" >> "$GITHUB_OUTPUT"
+
+      - name: Test preview identity and packaging
+        run: >-
+          vp test run
+          apps/desktop/src/updates/updateChannels.test.ts
+          apps/desktop/src/app/DesktopEnvironment.test.ts
+          apps/desktop/src/app/DesktopAppIdentity.test.ts
+          apps/desktop/src/electron/ElectronProtocol.test.ts
+          apps/desktop/src/app/DesktopClerk.test.ts
+          scripts/build-desktop-artifact.test.ts
+
+      - name: Build unsigned macOS DMG
+        shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          PREVIEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "$PREVIEW_VERSION" \
+            --verbose
+
+          shopt -s nullglob
+          dmg_files=(release/*.dmg)
+          if (( ${#dmg_files[@]} != 1 )); then
+            printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
+            exit 1
+          fi
+          dmg_file="${dmg_files[0]}"
+          mount_directory="$(mktemp -d)"
+          cleanup_preview_mount() {
+            hdiutil detach "$mount_directory" >/dev/null 2>&1 || true
+            rmdir "$mount_directory" >/dev/null 2>&1 || true
+          }
+          trap cleanup_preview_mount EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_directory" "$dmg_file"
+          preview_app="$mount_directory/T3 Code (Preview).app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$preview_app/Contents/Info.plist")" = "com.t3tools.t3code.preview"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$preview_app/Contents/Info.plist")" = "$PREVIEW_VERSION"
+          preview_executable="$preview_app/Contents/MacOS/T3 Code (Preview)"
+          packaged_version="$(
+            ELECTRON_RUN_AS_NODE=1 "$preview_executable" -p "require(process.argv[1]).version" "$preview_app/Contents/Resources/app.asar/package.json"
+          )"
+          test "$packaged_version" = "$PREVIEW_VERSION"
+          codesign --verify --deep --strict --verbose=2 "$preview_app"
+
+          preview_home="$(mktemp -d)"
+          preview_log="$preview_home/userdata/logs/desktop.trace.ndjson"
+          preview_stderr="$preview_home/launch.stderr.log"
+          preview_pid=""
+          cleanup_preview_process() {
+            if [[ -n "$preview_pid" ]] && kill -0 "$preview_pid" >/dev/null 2>&1; then
+              kill "$preview_pid"
+              wait "$preview_pid" || true
+            fi
+          }
+          trap 'cleanup_preview_process; cleanup_preview_mount' EXIT
+
+          T3CODE_HOME="$preview_home" "$preview_executable" >"$preview_stderr" 2>&1 &
+          preview_pid="$!"
+          preview_ready=false
+          for _ in {1..30}; do
+            if [[ -f "$preview_log" ]] && grep -Fq '"name":"app ready"' "$preview_log"; then
+              preview_ready=true
+              break
+            fi
+            if ! kill -0 "$preview_pid" >/dev/null 2>&1; then
+              echo "Preview app exited before becoming ready." >&2
+              sed -n '1,120p' "$preview_stderr" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$preview_ready" != true ]]; then
+            echo "Preview app did not become ready within 30 seconds." >&2
+            sed -n '1,120p' "$preview_stderr" >&2
+            exit 1
+          fi
+          cleanup_preview_process
+          preview_pid=""
+
+          cleanup_preview_mount
+          trap - EXIT
+
+          dmg_directory="$(dirname "$dmg_file")"
+          dmg_name="$(basename "$dmg_file")"
+          (
+            cd "$dmg_directory"
+            shasum -a 256 "$dmg_name" > "$dmg_name.sha256"
+            shasum -a 256 -c "$dmg_name.sha256"
+          )
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3code-forgejo-macos-arm64-${{ steps.version.outputs.version }}
+          path: |
+            release/*.dmg
+            release/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14

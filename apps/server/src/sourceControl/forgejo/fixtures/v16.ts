@@ -1,0 +1,31 @@
+export const forgejoV16Fixture = {
+  version: { version: "16.0.3" },
+  settings: { default_paging_num: 30, max_response_items: 75 },
+  user: {
+    login: "forgejo-v16-user",
+    full_name: "Forgejo 16 User",
+    avatar_url: "https://forgejo-v16.test/avatars/1",
+    pronouns: "they/them",
+  },
+  repository: {
+    full_name: "owner/repo",
+    html_url: "https://forgejo-v16.test/owner/repo",
+    clone_url: "https://forgejo-v16.test/owner/repo.git",
+    ssh_url: "ssh://git@forgejo-v16.test:2222/owner/repo.git",
+    private: false,
+    default_branch: "trunk",
+    owner: { login: "owner", pronouns: "they/them" },
+    object_format_name: "sha256",
+  },
+  pullRequest: {
+    number: 101,
+    title: "Forgejo 16 pull request",
+    html_url: "https://forgejo-v16.test/owner/repo/pulls/101",
+    state: "closed",
+    merged: true,
+    merged_at: "2026-08-31T12:00:00.000Z",
+    base: { ref: "trunk" },
+    head: { ref: "feature/forgejo-v16" },
+    pin_order: 0,
+  },
+} as const;

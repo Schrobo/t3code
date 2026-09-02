@@ -1,0 +1,20 @@
+name: Forgejo fork CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forgejo-fork-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    uses: ./.github/workflows/forgejo-validation.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}

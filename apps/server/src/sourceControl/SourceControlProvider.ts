@@ -3,15 +3,18 @@ import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
   ChangeRequestState,
+  SourceControlConnectionId,
   SourceControlProviderError,
   SourceControlProviderInfo,
   SourceControlProviderKind,
   SourceControlRepositoryCloneUrls,
+  SourceControlRepositorySearchItem,
   SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
 
 export interface SourceControlProviderContext {
   readonly provider: SourceControlProviderInfo;
+  readonly connectionId?: SourceControlConnectionId;
   readonly remoteName: string;
   readonly remoteUrl: string;
 }
@@ -109,13 +112,24 @@ export class SourceControlProvider extends Context.Service<
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
+      readonly connectionId?: SourceControlConnectionId;
       readonly repository: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
     readonly createRepository: (input: {
       readonly cwd: string;
+      readonly connectionId?: SourceControlConnectionId;
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
+    readonly searchRepositories?: (input: {
+      readonly cwd: string;
+      readonly connectionId?: SourceControlConnectionId;
+      readonly query: string;
+      readonly limit?: number;
+    }) => Effect.Effect<
+      ReadonlyArray<SourceControlRepositorySearchItem>,
+      SourceControlProviderError
+    >;
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

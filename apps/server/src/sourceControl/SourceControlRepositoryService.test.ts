@@ -7,7 +7,11 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  SourceControlConnectionId,
+  SourceControlProviderError,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -114,6 +118,46 @@ it.effect("looks up repositories through the requested provider without search",
 
     assert.deepStrictEqual(result, { provider: "github", ...CLONE_URLS });
     assert.deepStrictEqual(calls, [{ cwd: "/workspace", repository: "octocat/t3code" }]);
+  }).pipe(Effect.provide(makeLayer({ provider })));
+});
+
+it.effect("searches repositories through a selected native provider connection", () => {
+  const connectionId = SourceControlConnectionId.make("00000000-0000-4000-8000-000000000253");
+  const calls: Array<{ connectionId?: typeof connectionId; query: string; limit?: number }> = [];
+  const provider = makeProvider({
+    kind: "forgejo",
+    searchRepositories: (input) =>
+      Effect.sync(() => {
+        calls.push({
+          ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
+          query: input.query,
+          ...(input.limit === undefined ? {} : { limit: input.limit }),
+        });
+        return [
+          {
+            provider: "forgejo",
+            connectionId,
+            nameWithOwner: "forge-user/t3code",
+            url: "https://forgejo.test/forge-user/t3code.git",
+            sshUrl: "git@forgejo.test:forge-user/t3code.git",
+            visibility: "private",
+            defaultBranch: "main",
+          },
+        ];
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const result = yield* service.searchRepositories({
+      provider: "forgejo",
+      connectionId,
+      query: "t3code",
+      limit: 10,
+    });
+
+    assert.equal(result.repositories[0]?.connectionId, connectionId);
+    assert.deepStrictEqual(calls, [{ connectionId, query: "t3code", limit: 10 }]);
   }).pipe(Effect.provide(makeLayer({ provider })));
 });
 

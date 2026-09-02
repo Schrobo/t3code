@@ -5,7 +5,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import {
+  SourceControlConnection,
+  SourceControlConnectionId,
+  SourceControlConnectionSshHost,
+  SourceControlConnectionUrl,
+  VcsRepositoryDetectionError,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
@@ -16,6 +22,8 @@ import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { ForgejoApi } from "./forgejo/ForgejoApi.ts";
+import { SourceControlConnectionService } from "./connections/SourceControlConnectionService.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -40,6 +48,7 @@ function makeRegistry(input: {
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  readonly forgejoConnection?: SourceControlConnection;
 }) {
   const driver = {
     listRemotes: () =>
@@ -83,7 +92,10 @@ function makeRegistry(input: {
     ...input.process,
   });
 
-  return SourceControlProviderRegistry.make.pipe(
+  const program = input.forgejoConnection
+    ? SourceControlProviderRegistry.makeWithForgejo
+    : SourceControlProviderRegistry.make;
+  return program.pipe(
     Effect.provide(
       Layer.mergeAll(
         registryLayer,
@@ -92,6 +104,11 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(ForgejoApi)({}),
+        Layer.mock(SourceControlConnectionService)({
+          resolveByRemoteUrl: () =>
+            Effect.succeed({ connection: input.forgejoConnection!, token: "opaque-test-token" }),
+        }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -109,6 +126,45 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect("routes private Forgejo remotes through an exact stored connection match", () =>
+  Effect.gen(function* () {
+    const connection = SourceControlConnection.make({
+      id: SourceControlConnectionId.make("00000000-0000-4000-8000-000000000253"),
+      provider: "forgejo",
+      displayName: "Private Forgejo",
+      baseUrl: SourceControlConnectionUrl.make("https://scm.example.test/forge"),
+      apiUrl: SourceControlConnectionUrl.make("https://scm.example.test/forge/api/v1"),
+      sshHost: SourceControlConnectionSshHost.make("ssh.scm.example.test"),
+      sshPort: 2222,
+      identity: { login: "forge-user" },
+      serverVersion: "16.0.3",
+      capabilities: {
+        repositorySearch: true,
+        repositoryCreate: true,
+        changeRequestList: true,
+        changeRequestCreate: true,
+        changeRequestCheckout: true,
+      },
+      credentialConfigured: true,
+      verifiedAt: DateTime.makeUnsafe("2026-08-31T12:00:00.000Z"),
+    });
+    const registry = yield* makeRegistry({
+      remotes: [
+        {
+          name: "origin",
+          url: "ssh://git@ssh.scm.example.test:2222/owner/repo.git",
+        },
+      ],
+      forgejoConnection: connection,
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+    assert.equal(handle.provider.kind, "forgejo");
+    assert.equal(handle.context?.connectionId, connection.id);
+    assert.equal(handle.context?.provider.baseUrl, connection.baseUrl);
   }),
 );
 

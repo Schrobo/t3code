@@ -1,0 +1,165 @@
+name: Sync Forgejo fork with upstream nightly
+
+on:
+  schedule:
+    # Official nightlies are frequent. The workflow exits before installing
+    # dependencies when main already contains the newest tag.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forgejo-upstream-nightly-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare rebased branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      branch: ${{ steps.sync.outputs.branch }}
+      changed: ${{ steps.sync.outputs.changed }}
+      nightly_tag: ${{ steps.sync.outputs.nightly_tag }}
+    steps:
+      - name: Check GitHub App configuration
+        shell: bash
+        env:
+          APP_ID: ${{ vars.FORK_SYNC_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.FORK_SYNC_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$APP_ID" || -z "$APP_PRIVATE_KEY" ]]; then
+            echo "Configure FORK_SYNC_APP_ID and FORK_SYNC_APP_PRIVATE_KEY before enabling nightly sync." >&2
+            exit 1
+          fi
+
+      - id: app_token
+        name: Create short-lived GitHub App token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.FORK_SYNC_APP_ID }}
+          private-key: ${{ secrets.FORK_SYNC_APP_PRIVATE_KEY }}
+
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app_token.outputs.token }}
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - id: sync
+        name: Rebase thin fork onto newest nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          read -r nightly_sha nightly_ref < <(
+            git ls-remote --refs --sort=-version:refname https://github.com/pingdotgg/t3code.git 'refs/tags/v*-nightly.*' |
+              head -n 1
+          )
+          if [[ -z "$nightly_sha" || -z "$nightly_ref" ]]; then
+            echo "Could not resolve the newest official T3 Code nightly tag." >&2
+            exit 1
+          fi
+
+          nightly_tag="${nightly_ref#refs/tags/}"
+          nightly_commit_ref="refs/t3code-upstream-nightly/$nightly_tag"
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$nightly_ref:$nightly_commit_ref"
+          echo "nightly_tag=$nightly_tag" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$nightly_commit_ref" HEAD; then
+            echo "Fork main already contains $nightly_tag."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous_upstream_commit="$(git merge-base HEAD "$nightly_commit_ref")"
+          if [[ -z "$previous_upstream_commit" ]]; then
+            echo "Fork main and $nightly_tag have no common ancestor." >&2
+            exit 1
+          fi
+
+          sync_branch="automation/nightly-${nightly_tag#v}"
+          git config user.name "t3code-forgejo-sync[bot]"
+          git config user.email "t3code-forgejo-sync[bot]@users.noreply.github.com"
+          git switch --create "$sync_branch"
+
+          if ! git rebase --onto "$nightly_commit_ref" "$previous_upstream_commit"; then
+            git rebase --abort
+            echo "The Forgejo patch conflicts with $nightly_tag. Resolve this sync manually; no branch was pushed." >&2
+            exit 1
+          fi
+
+          git push --force-with-lease origin "HEAD:refs/heads/$sync_branch"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$sync_branch" >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Validate Forgejo patch
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    uses: ./.github/workflows/forgejo-validation.yml
+    with:
+      ref: ${{ needs.prepare.outputs.branch }}
+
+  pull_request:
+    name: Open sync pull request
+    needs: [prepare, validate]
+    if: needs.prepare.outputs.changed == 'true' && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: app_token
+        name: Create short-lived GitHub App token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.FORK_SYNC_APP_ID }}
+          private-key: ${{ secrets.FORK_SYNC_APP_PRIVATE_KEY }}
+
+      - id: create
+        name: Open pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          SYNC_BRANCH: ${{ needs.prepare.outputs.branch }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.nightly_tag }}
+        run: |
+          set -euo pipefail
+
+          pull_request_url="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --head "$SYNC_BRANCH" \
+              --state open \
+              --json url \
+              --jq '.[0].url // empty'
+          )"
+          if [[ -z "$pull_request_url" ]]; then
+            pull_request_url="$(
+              gh pr create \
+                --repo "$GITHUB_REPOSITORY" \
+                --base "${{ github.event.repository.default_branch }}" \
+                --head "$SYNC_BRANCH" \
+                --title "chore: sync Forgejo fork with $NIGHTLY_TAG" \
+                --body "Rebases the Forgejo thin fork onto the newest official T3 Code nightly, $NIGHTLY_TAG. The sync workflow passed the focused Forgejo tests and package typechecks. Merging to main starts the macOS preview build."
+            )"
+          fi
+
+          echo "Pull request: $pull_request_url"
+          echo "url=$pull_request_url" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: steps.create.outputs.url != '' && vars.FORK_SYNC_AUTO_MERGE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          PULL_REQUEST_URL: ${{ steps.create.outputs.url }}
+        run: gh pr merge --auto --squash --delete-branch "$PULL_REQUEST_URL"

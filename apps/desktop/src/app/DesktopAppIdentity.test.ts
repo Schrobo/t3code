@@ -156,6 +156,21 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
+  it.effect("never falls back to the Alpha userData path for preview builds", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/t3code-preview");
+      }),
+      {
+        environment: { appVersion: "1.2.3-pr.42.abcdef0" },
+        legacyPathExists: true,
+      },
+    ),
+  );
+
   it.effect("preserves failures while inspecting the legacy userData path", () => {
     const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
     const cause = PlatformError.systemError({

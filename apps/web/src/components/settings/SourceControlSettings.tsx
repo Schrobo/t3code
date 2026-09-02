@@ -1,7 +1,7 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlProviderKind,
@@ -18,6 +18,7 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { SharedSettingsMismatchAlert } from "./SharedSettingsMismatchAlert";
 import { cn } from "../../lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
@@ -25,6 +26,14 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import {
   Empty,
   EmptyContent,
@@ -47,6 +56,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AzureDevOpsIcon,
   BitbucketIcon,
+  ForgejoIcon,
   GitHubIcon,
   GitIcon,
   GitLabIcon,
@@ -55,11 +65,14 @@ import {
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
+import { ForgejoConnectionsSettings } from "./ForgejoConnectionsSettings";
 import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsSearchTarget,
   SettingsSection,
+  useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -73,6 +86,7 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   gitlab: GitLabIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
+  forgejo: ForgejoIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
@@ -267,6 +281,13 @@ function DiscoveryItemRow({
   const authAccount = auth ? optionLabel(auth.account) : null;
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
+  const searchTargetId = useSettingsSearchTargetId();
+
+  useEffect(() => {
+    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+      setIsExpanded(true);
+    }
+  }, [item.kind, searchTargetId]);
 
   return (
     <div
@@ -345,13 +366,14 @@ function GitFetchIntervalSettings() {
   );
   const canResetFetchInterval =
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
+  const setting = searchableSetting("git-fetch-interval");
 
   return (
-    <div className="grid gap-3">
+    <SettingsSearchTarget id={setting.id} className="grid gap-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
-            <span className="text-xs font-medium text-foreground">Fetch interval</span>
+            <span className="text-xs font-medium text-foreground">{setting.title}</span>
             <PolicyTooltip>
               This interval is configured for Git only. The shared Background activity policy still
               decides whether Git refreshes may run when the timer fires. Custom intervals appear as
@@ -407,7 +429,7 @@ function GitFetchIntervalSettings() {
           <span className="text-xs text-muted-foreground">seconds</span>
         </div>
       </div>
-    </div>
+    </SettingsSearchTarget>
   );
 }
 
@@ -493,6 +515,8 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
+  const [addConnectionPickerOpen, setAddConnectionPickerOpen] = useState(false);
+  const [forgejoAddOpen, setForgejoAddOpen] = useState(false);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const fallbackEnvironment =
@@ -535,15 +559,30 @@ export function SourceControlSettingsPanel() {
       <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
     </Tooltip>
   );
+  const providerHeaderAction = (
+    <div className="flex items-center gap-1.5">
+      <Button
+        size="compact"
+        variant="outline"
+        onClick={() => setAddConnectionPickerOpen(true)}
+        disabled={environmentId === null}
+      >
+        <PlusIcon aria-hidden />
+        Add connection
+      </Button>
+      {!hasVersionControlSystems ? scanButton : null}
+    </div>
+  );
 
   return (
     <SettingsPageContainer>
+      <SharedSettingsMismatchAlert />
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
           <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
-      ) : hasDiscoveryItems ? (
+      ) : (
         <>
           {hasVersionControlSystems ? (
             <SettingsSection
@@ -560,28 +599,66 @@ export function SourceControlSettingsPanel() {
               ))}
             </SettingsSection>
           ) : null}
-
-          {result.sourceControlProviders.length > 0 ? (
-            <SettingsSection
-              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title="Source Control Providers"
-              headerAction={hasVersionControlSystems ? null : scanButton}
-            >
-              {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
-              ))}
-            </SettingsSection>
+          {!hasDiscoveryItems ? (
+            <EmptySourceControlDiscovery
+              error={discovery.error}
+              isPending={discovery.isPending}
+              onScan={handleScan}
+            />
           ) : null}
+          <SettingsSection
+            id={
+              !hasVersionControlSystems && hasDiscoveryItems
+                ? searchableSetting("source-control").id
+                : undefined
+            }
+            title="Source Control Providers"
+            headerAction={providerHeaderAction}
+          >
+            {result.sourceControlProviders.map((item) => (
+              <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+            ))}
+            <ForgejoConnectionsSettings
+              environmentId={environmentId}
+              addOpen={forgejoAddOpen}
+              onAddOpenChange={setForgejoAddOpen}
+            />
+          </SettingsSection>
         </>
-      ) : (
-        <EmptySourceControlDiscovery
-          error={discovery.error}
-          isPending={discovery.isPending}
-          onScan={handleScan}
-        />
       )}
 
-      {isPrimaryEnvironment ? <SourceControlWritingSettingsSection /> : null}
+      <Dialog open={addConnectionPickerOpen} onOpenChange={setAddConnectionPickerOpen}>
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Add source control connection</DialogTitle>
+            <DialogDescription>
+              Choose the service that hosts the repositories for this server environment.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <Button
+              variant="ghost-muted"
+              className="min-h-16 w-full justify-start gap-3 px-3 py-3 text-start"
+              onClick={() => {
+                setAddConnectionPickerOpen(false);
+                setForgejoAddOpen(true);
+              }}
+            >
+              <ForgejoIcon className="size-5 shrink-0" aria-hidden />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">Forgejo</span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  Connect a Forgejo instance with a personal access token.
+                </span>
+              </span>
+            </Button>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+
+      {/* Its rows are serverScoped: without a primary they render inert with
+          an explanation, which beats disappearing. */}
+      <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );
 }

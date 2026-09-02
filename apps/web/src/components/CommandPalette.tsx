@@ -1,16 +1,30 @@
 "use client";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
+  addProjectRemoteSourceLabel,
+  addProjectRemoteSourcePathHint,
+  addProjectRemoteSourceProvider,
+  buildAddProjectRemoteSourceReadiness,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  getDefaultForgejoConnectionId,
   normalizePastedCloneUrl,
+  sortAddProjectProviderSources,
+  type AddProjectCloneFlow,
+  type AddProjectRemoteSource,
+  type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -27,13 +41,11 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
-  type SourceControlDiscoveryResult,
-  type SourceControlProviderKind,
-  type SourceControlRepositoryInfo,
+  type SourceControlConnection,
+  type SourceControlConnectionId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
-import * as Option from "effect/Option";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   CornerLeftUpIcon,
@@ -65,6 +77,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
@@ -73,11 +86,13 @@ import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { vcsEnvironment } from "../state/vcs";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { useProject, useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
+import * as ThreadPr from "./ThreadStatusIndicators";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -104,6 +119,7 @@ import {
 } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -135,11 +151,12 @@ import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sideb
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { AzureDevOpsIcon, BitbucketIcon, ForgejoIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
+import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import {
   COMMAND_PALETTE_META_ICON_CLASS,
   CommandPaletteMetaDot,
@@ -202,77 +219,6 @@ interface AddProjectEnvironmentOption {
   readonly status: string;
 }
 
-type AddProjectRemoteProviderKind = Extract<
-  SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
->;
-type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
-
-type AddProjectCloneFlow =
-  | {
-      readonly step: "repository";
-      readonly environmentId: EnvironmentId;
-      readonly source: AddProjectRemoteSource;
-    }
-  | {
-      readonly step: "confirm";
-      readonly environmentId: EnvironmentId;
-      readonly source: AddProjectRemoteSource;
-      readonly repositoryInput: string;
-      readonly repository: SourceControlRepositoryInfo | null;
-      readonly remoteUrl: string;
-    };
-
-const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
-  "url",
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
-const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
-
-function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
-  switch (source) {
-    case "github":
-      return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "bitbucket":
-      return "Bitbucket";
-    case "azure-devops":
-      return "Azure DevOps";
-    case "url":
-      return "Git URL";
-  }
-}
-
-function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
-  switch (source) {
-    case "github":
-      return "owner/repo";
-    case "gitlab":
-      return "group/project";
-    case "bitbucket":
-      return "workspace/repository";
-    case "azure-devops":
-      return "project/repository";
-    case "url":
-      return "URL";
-  }
-}
-
-function remoteProjectSourceProvider(
-  source: AddProjectRemoteSource,
-): AddProjectRemoteProviderKind | null {
-  return source === "url" ? null : source;
-}
-
 function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: string): ReactNode {
   switch (source) {
     case "github":
@@ -283,6 +229,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <BitbucketIcon className={className} />;
     case "azure-devops":
       return <AzureDevOpsIcon className={className} />;
+    case "forgejo":
+      return <ForgejoIcon className={className} />;
     case "url":
       return <LinkIcon className={className} />;
   }
@@ -294,80 +242,7 @@ function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string
   if (flow.source === "url") {
     return "Enter Git clone URL";
   }
-  return `Enter ${remoteProjectSourceLabel(flow.source)} repository (${remoteProjectSourcePathHint(flow.source)})`;
-}
-
-function sourceProviderKind(source: AddProjectRemoteSource): AddProjectRemoteProviderKind | null {
-  return source === "url" ? null : source;
-}
-
-function sortAddProjectProviderSources(
-  readinessBySource: AddProjectRemoteSourceReadiness,
-): ReadonlyArray<AddProjectRemoteProviderKind> {
-  return REMOTE_PROJECT_PROVIDER_SOURCES.toSorted((left, right) => {
-    const leftReady = readinessBySource[left].ready;
-    const rightReady = readinessBySource[right].ready;
-    if (leftReady !== rightReady) {
-      return leftReady ? -1 : 1;
-    }
-    return remoteProjectSourceLabel(left).localeCompare(remoteProjectSourceLabel(right));
-  });
-}
-
-type AddProjectRemoteSourceReadiness = Record<
-  AddProjectRemoteSource,
-  { readonly ready: boolean; readonly hint: string | null }
->;
-
-function buildAddProjectRemoteSourceReadiness(
-  discovery: SourceControlDiscoveryResult | null,
-): AddProjectRemoteSourceReadiness {
-  const unavailable = {
-    ready: false,
-    hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
-  } as const;
-  const defaultReadiness: AddProjectRemoteSourceReadiness = {
-    url: { ready: true, hint: null },
-    github: unavailable,
-    gitlab: unavailable,
-    bitbucket: unavailable,
-    "azure-devops": unavailable,
-  };
-
-  if (!discovery) {
-    return defaultReadiness;
-  }
-
-  const providerByKind = new Map(
-    discovery.sourceControlProviders.map((provider) => [provider.kind, provider]),
-  );
-  const readiness = { ...defaultReadiness };
-
-  for (const source of REMOTE_PROJECT_SOURCES) {
-    const kind = sourceProviderKind(source);
-    if (!kind) continue;
-    const provider = providerByKind.get(kind);
-    if (!provider) {
-      readiness[source] = unavailable;
-      continue;
-    }
-    if (provider.status !== "available") {
-      readiness[source] = { ready: false, hint: provider.installHint };
-      continue;
-    }
-    if (provider.auth.status === "unauthenticated") {
-      readiness[source] = {
-        ready: false,
-        hint:
-          Option.getOrNull(provider.auth.detail) ??
-          `${provider.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
-      };
-      continue;
-    }
-    readiness[source] = { ready: true, hint: null };
-  }
-
-  return readiness;
+  return `Enter ${addProjectRemoteSourceLabel(flow.source)} repository (${addProjectRemoteSourcePathHint(flow.source)})`;
 }
 
 function errorMessage(error: unknown): string {
@@ -563,6 +438,7 @@ function OpenCommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -585,9 +461,69 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const changeRequestSnapshotByKey = useAtomValue(ThreadPr.threadChangeRequestSnapshotsAtom);
+  const activeThreadProject = useProject(
+    activeThread === null
+      ? null
+      : scopeProjectRef(activeThread.environmentId, activeThread.projectId),
+  );
+  const activeThreadCwd = activeThread?.worktreePath ?? activeThreadProject?.workspaceRoot ?? null;
+  const activeThreadGitStatus = useEnvironmentQuery(
+    activeThread != null &&
+      activeThread.linkedPullRequest == null &&
+      activeThread.branch !== null &&
+      activeThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: activeThread.environmentId,
+          input: { cwd: activeThreadCwd },
+        })
+      : null,
+  ).data;
+  const detectedPullRequestUrl =
+    activeThread == null || activeThread.linkedPullRequest != null
+      ? null
+      : (ThreadPr.resolveDisplayedThreadPr({
+          threadBranch: activeThread.branch,
+          gitStatus: activeThreadGitStatus ?? null,
+          snapshot: changeRequestSnapshotByKey.get(
+            scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+          ),
+          retainTerminalOnBranchMismatch: activeThread.worktreePath === null,
+        })?.url ?? null);
+  const activeThreadReferenceCopyTarget =
+    activeThread == null
+      ? null
+      : resolveThreadReferenceCopyTarget({
+          threadId: activeThread.id,
+          linkedPullRequestUrl: activeThread.linkedPullRequest?.url ?? null,
+          detectedPullRequestUrl,
+        });
+  const copyActiveThreadReference = useCallback(async () => {
+    const target = activeThreadReferenceCopyTarget;
+    if (target === null) return;
+    try {
+      const didCopy = await writeTextToClipboard(target.value, target.clipboardTarget);
+      if (!didCopy) return;
+      toastManager.add({
+        type: "success",
+        title: target.successTitle,
+        description: target.value,
+      });
+    } catch (error) {
+      console.error(error);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: target.failureTitle,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -825,6 +761,38 @@ function OpenCommandPaletteDialog(props: {
           environmentId: browseEnvironmentId,
           input: {},
         }),
+  );
+  const sourceControlConnections = useEnvironmentQuery(
+    browseEnvironmentId === null
+      ? null
+      : sourceControlEnvironment.connections({
+          environmentId: browseEnvironmentId,
+          input: {},
+        }),
+  );
+  const forgejoConnections = useMemo(
+    () =>
+      (sourceControlConnections.data?.connections ?? []).filter(
+        (connection): connection is SourceControlConnection => connection.provider === "forgejo",
+      ),
+    [sourceControlConnections.data],
+  );
+  const forgejoRepositorySearch = useEnvironmentQuery(
+    addProjectCloneFlow?.step === "repository" &&
+      addProjectCloneFlow.source === "forgejo" &&
+      deferredQuery.trim().length > 0
+      ? sourceControlEnvironment.repositorySearch({
+          environmentId: addProjectCloneFlow.environmentId,
+          input: {
+            provider: "forgejo",
+            ...(addProjectCloneFlow.connectionId
+              ? { connectionId: addProjectCloneFlow.connectionId }
+              : {}),
+            query: deferredQuery.trim(),
+            limit: 30,
+          },
+        })
+      : null,
   );
   const browseEnvironmentPlatform = getEnvironmentBrowsePlatform(
     browseEnvironment?.serverConfig?.environment.platform.os,
@@ -1229,9 +1197,18 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const startAddProjectClone = useCallback(
-    (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
+    (
+      environmentId: EnvironmentId,
+      source: AddProjectRemoteSource,
+      connectionId?: SourceControlConnectionId,
+    ): void => {
       setAddProjectEnvironmentId(environmentId);
-      setAddProjectCloneFlow({ step: "repository", environmentId, source });
+      setAddProjectCloneFlow({
+        step: "repository",
+        environmentId,
+        source,
+        ...(connectionId ? { connectionId } : {}),
+      });
       pushPaletteView({
         addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
         groups: [],
@@ -1250,6 +1227,7 @@ function OpenCommandPaletteDialog(props: {
     (
       environmentId: EnvironmentId,
       readinessBySource: AddProjectRemoteSourceReadiness,
+      connections: ReadonlyArray<SourceControlConnection>,
     ): CommandPaletteView["groups"] => {
       const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
         {
@@ -1272,12 +1250,12 @@ function OpenCommandPaletteDialog(props: {
       ];
 
       for (const source of orderedSources) {
-        const label = remoteProjectSourceLabel(source);
+        const label = addProjectRemoteSourceLabel(source);
         const title = source === "url" ? "Git URL" : `${label} repository`;
         const description =
           source === "url"
             ? "Clone from a remote URL"
-            : `Clone ${label} ${remoteProjectSourcePathHint(source)}`;
+            : `Clone ${label} ${addProjectRemoteSourcePathHint(source)}`;
         const readiness = readinessBySource[source];
         const disabledHint = readiness.hint;
 
@@ -1320,6 +1298,41 @@ function OpenCommandPaletteDialog(props: {
           continue;
         }
 
+        if (source === "forgejo" && connections.length > 1) {
+          sourceItems.push({
+            kind: "submenu",
+            value: `action:add-project:${environmentId}:forgejo`,
+            searchTerms: ["clone", "forgejo", "instance", "connection"],
+            title,
+            description: "Choose a Forgejo connection",
+            icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
+            addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
+            groups: [
+              {
+                value: `forgejo-connections:${environmentId}`,
+                label: "Forgejo connections",
+                items: connections.map((connection) => ({
+                  kind: "action" as const,
+                  value: `action:add-project:${environmentId}:forgejo:${connection.id}`,
+                  searchTerms: [
+                    connection.displayName,
+                    connection.baseUrl,
+                    connection.identity.login,
+                  ],
+                  title: connection.displayName,
+                  description: connection.baseUrl,
+                  icon: <ForgejoIcon className={ITEM_ICON_CLASS} />,
+                  keepOpen: true,
+                  run: async () => {
+                    startAddProjectClone(environmentId, "forgejo", connection.id);
+                  },
+                })),
+              },
+            ],
+          });
+          continue;
+        }
+
         sourceItems.push({
           kind: "action",
           value: `action:add-project:${environmentId}:${source}`,
@@ -1330,7 +1343,13 @@ function OpenCommandPaletteDialog(props: {
           ...(titleTrailingContent ? { titleTrailingContent } : {}),
           keepOpen: true,
           run: async () => {
-            startAddProjectClone(environmentId, source);
+            startAddProjectClone(
+              environmentId,
+              source,
+              source === "forgejo"
+                ? (getDefaultForgejoConnectionId(connections) ?? undefined)
+                : undefined,
+            );
           },
         });
       }
@@ -1363,7 +1382,9 @@ function OpenCommandPaletteDialog(props: {
           environmentId,
           buildAddProjectRemoteSourceReadiness(
             browseEnvironmentId === environmentId ? sourceControlDiscovery.data : null,
+            browseEnvironmentId === environmentId ? forgejoConnections : [],
           ),
+          browseEnvironmentId === environmentId ? forgejoConnections : [],
         ),
       });
     },
@@ -1373,6 +1394,7 @@ function OpenCommandPaletteDialog(props: {
       environments,
       pushPaletteView,
       sourceControlDiscovery.data,
+      forgejoConnections,
     ],
   );
 
@@ -1525,6 +1547,20 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (activeThreadReferenceCopyTarget !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:copy-thread-reference",
+      searchTerms: ["copy", "pull request", "pr link", "thread id", "reference"],
+      title:
+        activeThreadReferenceCopyTarget.kind === "pull-request" ? "Copy PR link" : "Copy thread ID",
+      description: activeThreadReferenceCopyTarget.value,
+      icon: <LinkIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.copyReference",
+      run: copyActiveThreadReference,
+    });
+  }
+
   actionItems.push({
     kind: "action",
     value: "action:open-file-picker",
@@ -1637,7 +1673,19 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:project-settings",
-      searchTerms: ["project", "settings", "scripts", "model", "grouping", "checkout"],
+      searchTerms: [
+        "project",
+        "settings",
+        "name",
+        "icon",
+        "scripts",
+        "model",
+        "workspace",
+        "grouping",
+        "checkout",
+        "remove",
+        "t3.json",
+      ],
       title: "Project settings",
       description: contextualProjectGroup.displayName,
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
@@ -1651,6 +1699,25 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  const settingsSearchItems: CommandPaletteActionItem[] = searchSettings(
+    deferredQuery,
+    availableSettingsSearchItems,
+  ).map((item) => ({
+    kind: "action",
+    value: `setting:${item.id}`,
+    searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
+    title: item.title,
+    description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+    icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({
+        to: item.to,
+        hash: item.targetId ?? item.id,
+        replace: pathname === item.to,
+        hashScrollIntoView: false,
+      });
+    },
+  }));
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
   const activeGroups =
@@ -1659,7 +1726,8 @@ function OpenCommandPaletteDialog(props: {
     currentView.groups[0]?.value === sourceSelectionViewValue
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
-          buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data),
+          buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data, forgejoConnections),
+          forgejoConnections,
         )
       : (currentView?.groups ?? rootGroups);
 
@@ -1668,6 +1736,7 @@ function OpenCommandPaletteDialog(props: {
     query: deferredQuery,
     isInSubmenu: currentView !== null,
     projectSearchItems: projectSearchItems,
+    settingsSearchItems,
     threadSearchItems: allThreadItems,
   });
 
@@ -1860,7 +1929,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const provider = remoteProjectSourceProvider(addProjectCloneFlow.source);
+      const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
         const destinationPath = getCloneDestinationPath(
           getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
@@ -1885,6 +1954,9 @@ function OpenCommandPaletteDialog(props: {
         environmentId: addProjectCloneFlow.environmentId,
         input: {
           provider,
+          ...(addProjectCloneFlow.connectionId
+            ? { connectionId: addProjectCloneFlow.connectionId }
+            : {}),
           repository: rawRepository,
         },
       });
@@ -1910,6 +1982,9 @@ function OpenCommandPaletteDialog(props: {
         step: "confirm",
         environmentId: addProjectCloneFlow.environmentId,
         source: addProjectCloneFlow.source,
+        ...(addProjectCloneFlow.connectionId
+          ? { connectionId: addProjectCloneFlow.connectionId }
+          : {}),
         repositoryInput: rawRepository,
         repository,
         remoteUrl: getDefaultCloneUrl(repository),
@@ -1959,7 +2034,11 @@ function OpenCommandPaletteDialog(props: {
     const cloneResult = await cloneRepository({
       environmentId: addProjectCloneFlow.environmentId,
       input: {
+        ...(addProjectCloneFlow.connectionId
+          ? { connectionId: addProjectCloneFlow.connectionId }
+          : {}),
         remoteUrl: addProjectCloneFlow.remoteUrl,
+        ...(addProjectCloneFlow.protocol ? { protocol: addProjectCloneFlow.protocol } : {}),
         destinationPath,
       },
     });
@@ -2061,12 +2140,57 @@ function OpenCommandPaletteDialog(props: {
       title: addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.repositoryInput,
       description: addProjectCloneFlow.repository?.url ?? addProjectCloneFlow.remoteUrl,
       icon: remoteProjectSourceIcon(addProjectCloneFlow.source, ITEM_ICON_CLASS),
+      source: addProjectCloneFlow.source,
+      protocol: addProjectCloneFlow.protocol,
+      repository: addProjectCloneFlow.repository,
     };
   }, [addProjectCloneFlow]);
 
+  const forgejoRepositoryGroups = useMemo<CommandPaletteView["groups"]>(
+    () => [
+      {
+        value: "forgejo-repositories",
+        label: "Repositories",
+        items: (forgejoRepositorySearch.data?.repositories ?? []).map((repository) => ({
+          kind: "action" as const,
+          value: `forgejo-repository:${repository.connectionId}:${repository.nameWithOwner}`,
+          searchTerms: [repository.nameWithOwner, repository.url],
+          title: repository.nameWithOwner,
+          description: `${
+            forgejoConnections.find((connection) => connection.id === repository.connectionId)
+              ?.displayName ?? "Forgejo"
+          } · ${repository.visibility} · ${repository.defaultBranch ?? "No default branch"}`,
+          icon: <ForgejoIcon className={ITEM_ICON_CLASS} />,
+          keepOpen: true,
+          run: async () => {
+            if (addProjectCloneFlow?.step !== "repository") return;
+            const destinationPath = getCloneDestinationPath(
+              getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
+              getCloneDirectoryName(repository.nameWithOwner),
+            );
+            setAddProjectCloneFlow({
+              step: "confirm",
+              environmentId: addProjectCloneFlow.environmentId,
+              source: "forgejo",
+              connectionId: repository.connectionId,
+              repositoryInput: repository.nameWithOwner,
+              repository,
+              remoteUrl: getDefaultCloneUrl(repository),
+              protocol: "ssh",
+            });
+            setHighlightedItemValue(null);
+            setQuery(destinationPath);
+            setBrowseGeneration((generation) => generation + 1);
+          },
+        })),
+      },
+    ],
+    [addProjectCloneFlow, forgejoConnections, forgejoRepositorySearch.data],
+  );
+
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (addProjectCloneFlow?.step === "repository") {
-    displayedGroups = [];
+    displayedGroups = addProjectCloneFlow.source === "forgejo" ? forgejoRepositoryGroups : [];
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
   } else if (isBrowsing) {
@@ -2102,7 +2226,9 @@ function OpenCommandPaletteDialog(props: {
   const remoteProjectButtonLabel = addProjectCloneFlow
     ? addProjectCloneFlow.source === "url"
       ? "Continue"
-      : "Lookup"
+      : addProjectCloneFlow.source === "forgejo"
+        ? "Search"
+        : "Lookup"
     : null;
   const isRemoteProjectPending = isRemoteProjectLookingUp || isRemoteProjectCloning;
   const canSubmitRemoteProjectFlow =
@@ -2167,8 +2293,19 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
     }
+    if (command === "thread.copyReference" && activeThreadReferenceCopyTarget !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      void copyActiveThreadReference();
+      return;
+    }
 
-    if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
+    if (
+      addProjectCloneFlow?.step === "repository" &&
+      addProjectCloneFlow.source !== "forgejo" &&
+      event.key === "Enter"
+    ) {
       event.preventDefault();
       void submitAddProjectCloneFlow();
       return;
@@ -2332,7 +2469,7 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const inputAccessory =
-    addProjectCloneFlow?.step === "repository" ? (
+    addProjectCloneFlow?.step === "repository" && addProjectCloneFlow.source !== "forgejo" ? (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -2486,6 +2623,40 @@ function OpenCommandPaletteDialog(props: {
                 {remoteProjectContext.description}
               </span>
             </span>
+            {remoteProjectContext.source === "forgejo" && remoteProjectContext.repository ? (
+              <span
+                role="group"
+                aria-label="Clone protocol"
+                className="flex shrink-0 items-center gap-1"
+              >
+                {(["ssh", "https"] as const).map((protocol) => (
+                  <Button
+                    key={protocol}
+                    size="micro"
+                    variant={
+                      remoteProjectContext.protocol === protocol ? "secondary" : "ghost-muted"
+                    }
+                    aria-pressed={remoteProjectContext.protocol === protocol}
+                    onClick={() => {
+                      setAddProjectCloneFlow((current) =>
+                        current?.step === "confirm" && current.repository
+                          ? {
+                              ...current,
+                              protocol,
+                              remoteUrl:
+                                protocol === "ssh"
+                                  ? current.repository.sshUrl
+                                  : current.repository.url,
+                            }
+                          : current,
+                      );
+                    }}
+                  >
+                    {protocol === "ssh" ? "SSH" : "HTTPS"}
+                  </Button>
+                ))}
+              </span>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2500,7 +2671,11 @@ function OpenCommandPaletteDialog(props: {
               emptyStateMessage:
                 addProjectCloneFlow.source === "url"
                   ? "Enter a Git clone URL and press Enter to continue."
-                  : "Enter a repository path and press Enter to look it up.",
+                  : addProjectCloneFlow.source === "forgejo"
+                    ? forgejoRepositorySearch.isPending
+                      ? "Searching Forgejo repositories…"
+                      : (forgejoRepositorySearch.error ?? "Enter a repository name to search.")
+                    : "Enter a repository path and press Enter to look it up.",
             }
           : addProjectCloneFlow?.step === "confirm"
             ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }

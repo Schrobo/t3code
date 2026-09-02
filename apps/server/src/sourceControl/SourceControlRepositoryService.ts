@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,9 +16,12 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
+  type SourceControlRepositorySearchInput,
+  type SourceControlRepositorySearchResult,
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
+import { expandHomePathWith } from "../pathExpansion.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
@@ -30,6 +32,9 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly lookupRepository: (
       input: SourceControlRepositoryLookupInput,
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
+    readonly searchRepositories: (
+      input: SourceControlRepositorySearchInput,
+    ) => Effect.Effect<SourceControlRepositorySearchResult, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
@@ -55,9 +60,11 @@ function mapRepositoryError(operation: string, provider: SourceControlProviderKi
 function toRepositoryInfo(
   provider: SourceControlProviderKind,
   urls: SourceControlRepositoryCloneUrls,
+  connectionId?: SourceControlRepositoryInfo["connectionId"],
 ): SourceControlRepositoryInfo {
   return {
     provider,
+    ...(connectionId === undefined ? {} : { connectionId }),
     nameWithOwner: urls.nameWithOwner,
     url: urls.url,
     sshUrl: urls.sshUrl,
@@ -75,16 +82,6 @@ function selectRemoteUrl(
     case "auto":
       return urls.sshUrl;
   }
-}
-
-function expandHomePath(input: string, path: Path.Path): string {
-  if (input === "~") {
-    return NodeOS.homedir();
-  }
-  if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(NodeOS.homedir(), input.slice(2));
-  }
-  return input;
 }
 
 export const make = Effect.gen(function* () {
@@ -121,10 +118,35 @@ export const make = Effect.gen(function* () {
     const provider = yield* providers.get(providerKind);
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
+      ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
       repository: input.repository.trim(),
     });
-    return toRepositoryInfo(providerKind, urls);
+    return toRepositoryInfo(providerKind, urls, input.connectionId);
   });
+
+  const searchRepositories = Effect.fn("SourceControlRepositoryService.searchRepositories")(
+    function* (input: SourceControlRepositorySearchInput) {
+      const providerKind = yield* ensureConcreteProvider({
+        operation: "searchRepositories",
+        provider: input.provider,
+      });
+      const provider = yield* providers.get(providerKind);
+      if (provider.searchRepositories === undefined) {
+        return yield* new SourceControlRepositoryError({
+          operation: "searchRepositories",
+          provider: providerKind,
+          detail: `${providerKind} does not support native repository search.`,
+        });
+      }
+      const repositories = yield* provider.searchRepositories({
+        cwd: config.cwd,
+        ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
+        query: input.query,
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+      });
+      return { repositories };
+    },
+  );
 
   const normalizeDestinationPath = Effect.fn("SourceControlRepositoryService.normalizeDestination")(
     function* (destinationPath: string) {
@@ -137,7 +159,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      return path.resolve(expandHomePath(trimmed, path));
+      return path.resolve(expandHomePathWith(trimmed, path));
     },
   );
 
@@ -188,6 +210,7 @@ export const make = Effect.gen(function* () {
     if (input.provider && input.repository) {
       repository = yield* lookupRepository({
         provider: input.provider,
+        ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
         repository: input.repository,
         cwd: preparedDestination.parentPath,
       });
@@ -227,6 +250,7 @@ export const make = Effect.gen(function* () {
       const provider = yield* providers.get(providerKind);
       const urls = yield* provider.createRepository({
         cwd: input.cwd,
+        ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
         repository: input.repository.trim(),
         visibility: input.visibility,
       });
@@ -254,7 +278,7 @@ export const make = Effect.gen(function* () {
       if (!hasCommits) {
         const details = yield* git.statusDetails(input.cwd).pipe(Effect.orElseSucceed(() => null));
         return {
-          repository: toRepositoryInfo(providerKind, urls),
+          repository: toRepositoryInfo(providerKind, urls, input.connectionId),
           remoteName,
           remoteUrl,
           branch: details?.branch ?? "main",
@@ -265,7 +289,7 @@ export const make = Effect.gen(function* () {
       const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName });
 
       return {
-        repository: toRepositoryInfo(providerKind, urls),
+        repository: toRepositoryInfo(providerKind, urls, input.connectionId),
         remoteName,
         remoteUrl,
         branch: pushResult.branch,
@@ -276,6 +300,8 @@ export const make = Effect.gen(function* () {
   );
 
   return SourceControlRepositoryService.of({
+    searchRepositories: (input) =>
+      searchRepositories(input).pipe(mapRepositoryError("searchRepositories", input.provider)),
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
     cloneRepository: (input) =>

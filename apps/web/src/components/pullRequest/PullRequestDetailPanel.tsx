@@ -1,14 +1,17 @@
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  PullRequestAction,
-  PullRequestMergeMethod,
-  PullRequestUpdateMethod,
-  PullRequestRef,
-  PullRequestState,
-  ScopedThreadRef,
+import {
+  GitManagerError,
+  type EnvironmentId,
+  type GitPreparePullRequestThreadResult,
+  type PullRequestAction,
+  type PullRequestMergeMethod,
+  type PullRequestUpdateMethod,
+  type PullRequestRef,
+  type PullRequestState,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
@@ -90,6 +93,7 @@ import {
 } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
+import { hiddenToastActionProps, stackedThreadToast } from "../ui/toastHelpers";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -97,6 +101,7 @@ import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
+import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -137,6 +142,8 @@ import {
   resolvePullRequestState,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
+
+const isGitManagerError = Schema.is(GitManagerError);
 
 type DetailTab = "summary" | "timeline" | "code";
 
@@ -850,85 +857,122 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    const prepared = await prepareThread.run({
-      reference: detail.url,
-      mode,
-      threadId: opened.threadId,
-    });
-    if (prepared._tag === "Failure") {
+    const finishPreparedHandoff = async (
+      prepared: GitPreparePullRequestThreadResult,
+      checkoutMode: "worktree" | "local",
+    ) => {
+      // The same thread again, now that there is somewhere to point it at. A local checkout has
+      // no worktree of its own, so the thread runs where the repository already is.
+      const pointed = await newThread(projectRef, {
+        branch: prepared.branch,
+        worktreePath: prepared.worktreePath,
+        envMode: prepared.worktreePath === null ? "local" : "worktree",
+      }).then(
+        (session) => session !== null,
+        () => false,
+      );
+      if (!pointed) {
+        setHandoff(null);
+        // The checkout is on disk; only the thread failed to move onto it. Writing the task now
+        // would send the agent at whatever the thread was already open on — which is the one
+        // outcome worth stopping for, since it reads as success and is not.
+        toastManager.update(toastId, {
+          type: "error",
+          title: "Checked out, but the thread stayed where it was",
+          description: `The checkout is ready on \`${prepared.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+        });
+        return;
+      }
+      // Released here whatever happened next: a loading toast never expires on its own, so leaving
+      // this set would spin forever and lock every handoff behind it until a reload.
       setHandoff(null);
-      // The server says what to do about it — that the branch is already checked out in the main
-      // repository, say — and that sentence is the only way out of the failure.
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not prepare the pull request checkout",
-        ...(detailMessage ? { description: detailMessage } : {}),
-      });
-      return;
-    }
-    // The same thread again, now that there is somewhere to point it at. A local checkout has
-    // no worktree of its own, so the thread runs where the repository already is.
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session !== null,
-      () => false,
-    );
-    if (!pointed) {
-      setHandoff(null);
-      // The checkout is on disk; only the thread failed to move onto it. Writing the task now
-      // would send the agent at whatever the thread was already open on — which is the one
-      // outcome worth stopping for, since it reads as success and is not.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
-      return;
-    }
-    // Released here whatever happened next: a loading toast never expires on its own, so leaving
-    // this set would spin forever and lock every handoff behind it until a reload.
-    setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries. Said once, in place of the
-    // success, because everything else about the handoff did happen.
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
-    if (task === null) {
+      // A worktree that was already there and had been worked in keeps whatever it holds, so the
+      // thread opens on older code than the pull request carries. Said once, in place of the
+      // success, because everything else about the handoff did happen.
+      const staleCheckoutToast = {
+        type: "warning",
+        title: "Checked out, but not on the latest commits",
+        description:
+          "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
+      } as const;
+      if (task === null) {
+        toastManager.update(
+          toastId,
+          prepared.isOnPullRequestHead
+            ? {
+                type: "success",
+                title: checkoutMode === "local" ? "Checked out here" : "Checked out",
+                description:
+                  checkoutMode === "local"
+                    ? "This repository is on the pull request's branch, with a thread open on it."
+                    : "The pull request is in its own worktree, with a thread open on it.",
+              }
+            : staleCheckoutToast,
+        );
+        return;
+      }
+      await openThreadWithTask(projectRef, task, opened);
       toastManager.update(
         toastId,
-        prepared.value.isOnPullRequestHead
+        prepared.isOnPullRequestHead
           ? {
               type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? "This repository is on the pull request's branch, with a thread open on it."
-                  : "The pull request is in its own worktree, with a thread open on it.",
+              title: "Checkout ready",
+              description: "The task is in the composer — read it over, then send.",
             }
           : staleCheckoutToast,
       );
-      return;
-    }
-    await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer — read it over, then send.",
-          }
-        : staleCheckoutToast,
-    );
+    };
+
+    const prepareInMode = async (checkoutMode: "worktree" | "local") => {
+      const prepared = await prepareThread.run({
+        reference: detail.url,
+        mode: checkoutMode,
+        threadId: opened.threadId,
+      });
+      if (prepared._tag === "Failure") {
+        setHandoff(null);
+        // Classify the failure returned by this exact command. The action manager also keeps a
+        // presentation error in React state, but that state is normalized and can arrive a render
+        // later; it is not the typed RPC error used for recovery decisions.
+        const error = squashAtomCommandFailure(prepared);
+        const detailMessage = error instanceof Error ? error.message : null;
+        const canUseLocal =
+          checkoutMode === "worktree" &&
+          isGitManagerError(error) &&
+          error.reason === "pull-request-branch-checked-out-in-main";
+        toastManager.update(
+          toastId,
+          stackedThreadToast({
+            type: "error",
+            title: "Could not prepare the pull request checkout",
+            ...(detailMessage ? { description: detailMessage } : {}),
+            ...(canUseLocal
+              ? {
+                  timeout: 0,
+                  actionProps: {
+                    children: "Use Local",
+                    onClick: () => {
+                      setHandoff(kind);
+                      toastManager.update(toastId, {
+                        type: "loading",
+                        title: "Preparing the pull request locally...",
+                        description: null,
+                        actionProps: hiddenToastActionProps,
+                      });
+                      void prepareInMode("local");
+                    },
+                  },
+                }
+              : {}),
+          }),
+        );
+        return;
+      }
+      await finishPreparedHandoff(prepared.value, checkoutMode);
+    };
+
+    await prepareInMode(mode);
   };
 
   const askAboutPullRequest = () => {
@@ -1921,7 +1965,7 @@ export function PullRequestDetailPanel({
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
         ) : detail ? (
-          <>
+          <PullRequestMarkdownContext value={detail.provider === "github" ? repositoryUrl : null}>
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
@@ -1978,7 +2022,7 @@ export function PullRequestDetailPanel({
                 </Suspense>
               </div>
             ) : null}
-          </>
+          </PullRequestMarkdownContext>
         ) : null}
       </div>
 

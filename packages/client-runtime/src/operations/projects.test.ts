@@ -4,7 +4,10 @@ import {
   ProjectId,
   CommandId,
   SourceControlDiscoveryResult,
+  SourceControlConnection,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import {
@@ -17,6 +20,7 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  getDefaultForgejoConnectionId,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
@@ -24,6 +28,7 @@ import {
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  const decodeConnection = Schema.decodeUnknownSync(SourceControlConnection);
   it("only allows project creation in connected environments", () => {
     expect(canCreateProjectInEnvironment("connected")).toBe(true);
     expect(canCreateProjectInEnvironment("available")).toBe(false);
@@ -215,6 +220,40 @@ describe("add project shared logic", () => {
     expect(readiness.github.ready).toBe(true);
     expect(readiness.gitlab).toEqual({ ready: false, hint: "Run glab auth login" });
     expect(sortAddProjectProviderSources(readiness)[0]).toBe("github");
+  });
+
+  it("requires a verified Forgejo connection and treats multiple instances as ready", () => {
+    expect(buildAddProjectRemoteSourceReadiness(null).forgejo).toEqual({
+      ready: false,
+      hint: "Add a Forgejo connection in Source Control settings.",
+    });
+    const connection = decodeConnection({
+      id: "00000000-0000-4000-8000-000000000001",
+      provider: "forgejo",
+      displayName: "Work Forgejo",
+      baseUrl: "https://git.example.com",
+      apiUrl: "https://git.example.com/api/v1",
+      sshHost: "git.example.com",
+      sshPort: 22,
+      identity: { login: "octo" },
+      serverVersion: "12.0.0",
+      capabilities: {
+        repositorySearch: true,
+        repositoryCreate: true,
+        changeRequestList: true,
+        changeRequestCreate: true,
+        changeRequestCheckout: true,
+      },
+      credentialConfigured: true,
+      verifiedAt: DateTime.makeUnsafe("2026-08-31T00:00:00.000Z"),
+    });
+    expect(buildAddProjectRemoteSourceReadiness(null, [connection]).forgejo).toEqual({
+      ready: true,
+      hint: null,
+    });
+    expect(getDefaultForgejoConnectionId([])).toBeNull();
+    expect(getDefaultForgejoConnectionId([connection])).toBe(connection.id);
+    expect(getDefaultForgejoConnectionId([connection, connection])).toBeNull();
   });
 
   it("finds existing projects by normalized path in the target environment", () => {

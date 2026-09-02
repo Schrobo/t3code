@@ -131,6 +131,8 @@ export type PullRequestLabel = typeof PullRequestLabel.Type;
 
 export const PullRequestCheckStatus = Schema.Literals([
   "pending",
+  "queued",
+  "blocked",
   "success",
   "failure",
   "skipped",

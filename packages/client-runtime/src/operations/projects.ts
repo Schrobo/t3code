@@ -5,6 +5,9 @@ import type {
   OrchestrationCommand,
   ProjectId,
   SourceControlDiscoveryResult,
+  SourceControlConnection,
+  SourceControlConnectionId,
+  SourceControlCloneProtocol,
   SourceControlProviderKind,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
@@ -25,7 +28,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "forgejo"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -45,14 +48,17 @@ export type AddProjectCloneFlow =
       readonly step: "repository";
       readonly environmentId: EnvironmentId;
       readonly source: AddProjectRemoteSource;
+      readonly connectionId?: SourceControlConnectionId;
     }
   | {
       readonly step: "confirm";
       readonly environmentId: EnvironmentId;
       readonly source: AddProjectRemoteSource;
+      readonly connectionId?: SourceControlConnectionId;
       readonly repositoryInput: string;
       readonly repository: SourceControlRepositoryInfo | null;
       readonly remoteUrl: string;
+      readonly protocol?: SourceControlCloneProtocol;
     };
 
 const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
@@ -61,6 +67,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "forgejo",
 ];
 
 const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
@@ -68,6 +75,7 @@ const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProvide
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "forgejo",
 ];
 
 export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): string {
@@ -80,6 +88,8 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "forgejo":
+      return "Forgejo";
     case "url":
       return "Git URL";
   }
@@ -95,6 +105,8 @@ export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): 
       return "workspace/repository";
     case "azure-devops":
       return "project/repository";
+    case "forgejo":
+      return "owner/repository";
     case "url":
       return "URL";
   }
@@ -142,8 +154,15 @@ export function sortAddProjectProviderSources(
   );
 }
 
+export function getDefaultForgejoConnectionId(
+  connections: ReadonlyArray<SourceControlConnection>,
+): SourceControlConnectionId | null {
+  return connections.length === 1 ? (connections[0]?.id ?? null) : null;
+}
+
 export function buildAddProjectRemoteSourceReadiness(
   discovery: SourceControlDiscoveryResult | null,
+  connections: ReadonlyArray<SourceControlConnection> = [],
 ): AddProjectRemoteSourceReadiness {
   const unavailable = {
     ready: false,
@@ -155,6 +174,13 @@ export function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
+    forgejo:
+      connections.length > 0
+        ? { ready: true, hint: null }
+        : {
+            ready: false,
+            hint: "Add a Forgejo connection in Source Control settings.",
+          },
   };
 
   if (!discovery) {
@@ -165,6 +191,7 @@ export function buildAddProjectRemoteSourceReadiness(
     discovery.sourceControlProviders.map((provider) => [provider.kind, provider]),
   );
   for (const source of ADD_PROJECT_REMOTE_SOURCES) {
+    if (source === "forgejo") continue;
     const kind = addProjectRemoteSourceProvider(source);
     if (!kind) continue;
     const provider = providerByKind.get(kind);

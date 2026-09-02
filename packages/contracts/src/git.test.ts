@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   VcsCreateWorktreeInput,
   GitPreparePullRequestThreadInput,
+  GitManagerError,
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
@@ -52,6 +53,24 @@ describe("GitPreparePullRequestThreadInput", () => {
 
     expect(parsed.reference).toBe("#42");
     expect(parsed.mode).toBe("worktree");
+  });
+});
+
+describe("GitManagerError", () => {
+  it("preserves the typed local-checkout recovery reason across encoding", () => {
+    const codec = GitManagerError;
+    const original = new GitManagerError({
+      operation: "preparePullRequestThread",
+      cwd: "/repo",
+      detail: "The branch is already checked out in the main repo.",
+      reason: "pull-request-branch-checked-out-in-main",
+    });
+    const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeSync(codec)(original));
+
+    expect(decoded).toMatchObject({
+      _tag: "GitManagerError",
+      reason: "pull-request-branch-checked-out-in-main",
+    });
   });
 });
 

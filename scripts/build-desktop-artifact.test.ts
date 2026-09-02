@@ -43,7 +43,10 @@ import {
   resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
+  resolveDesktopAppId,
+  resolveDesktopArtifactName,
   resolveDesktopProductName,
+  resolveDesktopProtocolSchemes,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
   resolveResourceMonitorRustTargets,
@@ -249,9 +252,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("switches desktop packaging product names to nightly for nightly builds", () => {
+  it("resolves desktop packaging product names by release kind", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17-pr.42.abcdef0"), "T3 Code (Preview)");
+  });
+
+  it("isolates preview package identity from release builds", () => {
+    assert.equal(resolveDesktopAppId("0.0.17"), "com.t3tools.t3code");
+    assert.equal(resolveDesktopAppId("0.0.17-pr.42.abcdef0"), "com.t3tools.t3code.preview");
+    assert.equal(
+      resolveDesktopArtifactName("0.0.17-pr.42.abcdef0"),
+      "T3-Code-Preview-${version}-${arch}.${ext}",
+    );
+    assert.deepStrictEqual(resolveDesktopProtocolSchemes("0.0.17"), ["t3code", "t3code-dev"]);
+    assert.deepStrictEqual(resolveDesktopProtocolSchemes("0.0.17-pr.42.abcdef0"), [
+      "t3code-preview",
+    ]);
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -336,6 +353,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       assert.notProperty(preview, "publish");
+      assert.equal(preview.appId, "com.t3tools.t3code.preview");
+      assert.equal(preview.productName, "T3 Code (Preview)");
+      assert.equal(preview.artifactName, "T3-Code-Preview-${version}-${arch}.${ext}");
+      const previewMac = preview.mac as Record<string, unknown>;
+      assert.equal(previewMac.identity, "-");
+      assert.equal(previewMac.hardenedRuntime, false);
+      assert.deepStrictEqual(previewMac.protocols, [
+        { name: "T3 Code", schemes: ["t3code-preview"] },
+      ]);
+      assert.notProperty(release.mac as Record<string, unknown>, "identity");
+      assert.notProperty(release.mac as Record<string, unknown>, "hardenedRuntime");
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
@@ -999,6 +1027,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
     return Effect.scoped(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
         yield* validateWindowsPackagedPayload({
           stageDistDir: fixture.stageDistDir,
@@ -1006,8 +1035,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "arm64",
         });
 
+        const primaryExecutablePath = path.join(fixture.packagedAppDir, fixture.appExecutableName);
+
         assert.isFalse(
-          commands.some((command) => command.options.env?.ELECTRON_RUN_AS_NODE === "1"),
+          commands.some(
+            (command) =>
+              command.command === primaryExecutablePath &&
+              command.options.env?.ELECTRON_RUN_AS_NODE === "1",
+          ),
         );
         assert.isTrue(
           commands.some(

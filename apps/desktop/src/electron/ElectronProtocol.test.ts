@@ -23,6 +23,12 @@ describe("ElectronProtocol", () => {
     unhandleMock.mockReset();
   });
 
+  it("keeps stable, development, and preview renderer origins separate", () => {
+    assert.equal(ElectronProtocol.getDesktopUrl(false), "t3code://app/");
+    assert.equal(ElectronProtocol.getDesktopUrl(true), "t3code-dev://app/");
+    assert.equal(ElectronProtocol.getDesktopUrl(false, true), "t3code-preview://app/");
+  });
+
   it.effect("proxies the stable renderer origin to the current app server", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -225,7 +231,7 @@ describe("ElectronProtocol", () => {
       "http:",
       "https:",
     ]);
-    assert.deepEqual(directives["media-src"], ["'self'", "t3code:", "blob:"]);
+    assert.deepEqual(directives["media-src"], ["'self'", "t3code:", "blob:", "http:", "https:"]);
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
   });
 });

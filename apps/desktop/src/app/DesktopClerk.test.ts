@@ -29,10 +29,11 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
+const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = [], isPreview = false) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir: "/tmp/t3-state",
     isDevelopment,
+    isPreview,
     appDataDirectory: "/tmp/app-data",
     userDataDirName: isDevelopment ? "t3code-dev" : "t3code",
     legacyUserDataDirName: isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
@@ -210,25 +211,32 @@ describe("DesktopClerk", () => {
   });
 
   it.each([
-    { isDevelopment: true, scheme: "t3code-dev" },
-    { isDevelopment: false, scheme: "t3code" },
-  ])("configures the SDK with the $scheme renderer origin", ({ isDevelopment, scheme }) => {
-    const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue(bridge);
+    { isDevelopment: true, isPreview: false, scheme: "t3code-dev" },
+    { isDevelopment: false, isPreview: false, scheme: "t3code" },
+    { isDevelopment: false, isPreview: true, scheme: "t3code-preview" },
+  ])(
+    "configures the SDK with the $scheme renderer origin",
+    ({ isDevelopment, isPreview, scheme }) => {
+      const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockReturnValue(bridge);
 
-    assert.equal(DesktopClerk.createDesktopClerkBridge("/tmp/t3-state", isDevelopment), bridge);
-    assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
-    assert.deepEqual(createClerkBridgeMock.mock.calls, [
-      [
-        {
-          storage: storageAdapter,
-          passkeys: true,
-          renderer: { scheme, host: "app" },
-        },
-      ],
-    ]);
-    storageMock.mockClear();
-    createClerkBridgeMock.mockClear();
-  });
+      assert.equal(
+        DesktopClerk.createDesktopClerkBridge("/tmp/t3-state", isDevelopment, isPreview),
+        bridge,
+      );
+      assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
+      assert.deepEqual(createClerkBridgeMock.mock.calls, [
+        [
+          {
+            storage: storageAdapter,
+            passkeys: true,
+            renderer: { scheme, host: "app" },
+          },
+        ],
+      ]);
+      storageMock.mockClear();
+      createClerkBridgeMock.mockClear();
+    },
+  );
 });
