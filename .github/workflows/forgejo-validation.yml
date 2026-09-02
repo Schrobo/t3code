@@ -17,10 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout without write credentials
+      - name: Checkout with read-only credentials
         uses: actions/checkout@v6
         with:
-          persist-credentials: false
           ref: ${{ inputs.ref }}
           sparse-checkout: |
             /*
