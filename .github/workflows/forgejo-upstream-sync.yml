@@ -106,73 +106,9 @@ jobs:
     name: Validate Forgejo patch
     needs: prepare
     if: needs.prepare.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout rebased branch without write credentials
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          ref: ${{ needs.prepare.outputs.branch }}
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Test Forgejo server behavior
-        run: >-
-          vp test run
-          apps/server/src/git/GitManager.test.ts
-          apps/server/src/pullRequest/ForgejoPullRequestApi.test.ts
-          apps/server/src/pullRequest/ForgejoPullRequestProvider.test.ts
-          apps/server/src/sourceControl/ForgejoSourceControlProvider.test.ts
-          apps/server/src/sourceControl/SourceControlProviderRegistry.test.ts
-          apps/server/src/sourceControl/SourceControlRepositoryService.test.ts
-          apps/server/src/sourceControl/connections/SourceControlConnectionService.test.ts
-          apps/server/src/sourceControl/connections/SourceControlConnectionStore.test.ts
-          apps/server/src/sourceControl/forgejo/ForgejoApi.test.ts
-          apps/server/src/sourceControl/forgejo/ForgejoHttpClient.test.ts
-          apps/server/src/sourceControl/forgejo/ForgejoPagination.test.ts
-          apps/server/src/sourceControl/forgejo/ForgejoSchemas.test.ts
-
-      - name: Test shared contracts and clients
-        run: >-
-          vp test run
-          packages/contracts/src/git.test.ts
-          packages/contracts/src/sourceControl.test.ts
-          packages/shared/src/git.test.ts
-          packages/shared/src/sourceControl.test.ts
-          packages/client-runtime/src/operations/projects.test.ts
-          packages/client-runtime/src/state/sourceControl.test.ts
-          apps/web/src/components/GitActionsControl.logic.test.ts
-          apps/web/src/components/pullRequest/pullRequestChecks.test.tsx
-          apps/web/src/components/settings/SourceControlSettings.test.tsx
-
-      - name: Test desktop packaging
-        run: >-
-          vp test run
-          apps/desktop/src/updates/updateChannels.test.ts
-          apps/desktop/src/app/DesktopEnvironment.test.ts
-          apps/desktop/src/app/DesktopAppIdentity.test.ts
-          apps/desktop/src/app/DesktopClerk.test.ts
-          apps/desktop/src/electron/ElectronProtocol.test.ts
-          scripts/build-desktop-artifact.test.ts
-
-      - name: Typecheck affected packages
-        run: |
-          vp run --filter t3 typecheck
-          vp run --filter @t3tools/web typecheck
-          vp run --filter @t3tools/desktop typecheck
-          vp run --filter @t3tools/mobile typecheck
-          vp run --filter @t3tools/contracts typecheck
-          vp run --filter @t3tools/client-runtime typecheck
+    uses: ./.github/workflows/forgejo-validation.yml
+    with:
+      ref: ${{ needs.prepare.outputs.branch }}
 
   pull_request:
     name: Open sync pull request
