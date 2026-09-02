@@ -19,6 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -53,12 +54,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          base_version="$(node -p "require('./apps/desktop/package.json').version")"
+          read -r nightly_sha nightly_ref < <(
+            git ls-remote --refs --sort=-version:refname https://github.com/pingdotgg/t3code.git 'refs/tags/v*-nightly.*' |
+              head -n 1
+          )
+          if [[ -z "$nightly_sha" || -z "$nightly_ref" ]]; then
+            echo "Could not resolve the latest official T3 Code nightly tag." >&2
+            exit 1
+          fi
+          nightly_tag="${nightly_ref#refs/tags/}"
+          nightly_commit_ref="refs/t3code-upstream-nightly/$nightly_tag"
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$nightly_ref:$nightly_commit_ref"
+          if ! git merge-base --is-ancestor "$nightly_commit_ref" HEAD; then
+            echo "Branch is not based on the latest official nightly tag: $nightly_tag" >&2
+            exit 1
+          fi
+
+          nightly_version="${nightly_tag#v}"
+          base_version="${nightly_version%%-nightly.*}"
           short_sha="${GITHUB_SHA:0:7}"
           preview_version="${base_version}-pr.${GITHUB_RUN_NUMBER}.${short_sha}"
           node scripts/update-release-package-versions.ts "$preview_version"
           cp .env.example .env
 
+          echo "nightly_tag=$nightly_tag" >> "$GITHUB_OUTPUT"
           echo "version=$preview_version" >> "$GITHUB_OUTPUT"
 
       - name: Test preview identity and packaging
@@ -103,7 +122,48 @@ jobs:
           preview_app="$mount_directory/T3 Code (Preview).app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$preview_app/Contents/Info.plist")" = "com.t3tools.t3code.preview"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$preview_app/Contents/Info.plist")" = "$PREVIEW_VERSION"
+          preview_executable="$preview_app/Contents/MacOS/T3 Code (Preview)"
+          packaged_version="$(
+            ELECTRON_RUN_AS_NODE=1 "$preview_executable" -p "require(process.argv[1]).version" "$preview_app/Contents/Resources/app.asar/package.json"
+          )"
+          test "$packaged_version" = "$PREVIEW_VERSION"
           codesign --verify --deep --strict --verbose=2 "$preview_app"
+
+          preview_home="$(mktemp -d)"
+          preview_log="$preview_home/userdata/logs/desktop.trace.ndjson"
+          preview_stderr="$preview_home/launch.stderr.log"
+          preview_pid=""
+          cleanup_preview_process() {
+            if [[ -n "$preview_pid" ]] && kill -0 "$preview_pid" >/dev/null 2>&1; then
+              kill "$preview_pid"
+              wait "$preview_pid" || true
+            fi
+          }
+          trap 'cleanup_preview_process; cleanup_preview_mount' EXIT
+
+          T3CODE_HOME="$preview_home" "$preview_executable" >"$preview_stderr" 2>&1 &
+          preview_pid="$!"
+          preview_ready=false
+          for _ in {1..30}; do
+            if [[ -f "$preview_log" ]] && grep -Fq '"name":"app ready"' "$preview_log"; then
+              preview_ready=true
+              break
+            fi
+            if ! kill -0 "$preview_pid" >/dev/null 2>&1; then
+              echo "Preview app exited before becoming ready." >&2
+              sed -n '1,120p' "$preview_stderr" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$preview_ready" != true ]]; then
+            echo "Preview app did not become ready within 30 seconds." >&2
+            sed -n '1,120p' "$preview_stderr" >&2
+            exit 1
+          fi
+          cleanup_preview_process
+          preview_pid=""
+
           cleanup_preview_mount
           trap - EXIT
 
