@@ -162,4 +162,4 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           PULL_REQUEST_URL: ${{ steps.create.outputs.url }}
-        run: gh pr merge --auto --squash --delete-branch "$PULL_REQUEST_URL"
+        run: gh pr merge --auto --merge --delete-branch "$PULL_REQUEST_URL"
