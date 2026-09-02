@@ -41,9 +41,27 @@ export function createSourceControlEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    updateConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:update-connection",
+      tag: WS_METHODS.sourceControlConnectionsUpdate,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     verifyConnection: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:verify-connection",
       tag: WS_METHODS.sourceControlConnectionsVerify,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    replaceConnectionCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:replace-connection-credential",
+      tag: WS_METHODS.sourceControlConnectionsReplaceCredential,
       scheduler: commandScheduler,
       concurrency: {
         mode: "serial",

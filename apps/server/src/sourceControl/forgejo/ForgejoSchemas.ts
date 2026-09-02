@@ -71,9 +71,11 @@ function optionalNonEmpty(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+const decodeDateTime = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString);
+
 function parseDateTime(value: string | null | undefined) {
   if (!value) return Option.none<Schema.Schema.Type<typeof Schema.DateTimeUtc>>();
-  return Schema.decodeUnknownOption(Schema.DateTimeUtcFromString)(value);
+  return decodeDateTime(value);
 }
 
 export function normalizeForgejoPullRequest(

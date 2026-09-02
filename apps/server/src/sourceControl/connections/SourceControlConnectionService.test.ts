@@ -7,6 +7,7 @@ import {
   SourceControlConnectionId,
   SourceControlConnectionNotFoundError,
   SourceControlConnectionPersistenceError,
+  SourceControlConnectionUpdateInput,
   SourceControlConnectionUrl,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -26,6 +27,8 @@ import type { StoredSourceControlConnection } from "./SourceControlConnectionSto
 import * as SourceControlConnectionVerifierRegistry from "./SourceControlConnectionVerifierRegistry.ts";
 
 const decodeAddInput = Schema.decodeUnknownSync(SourceControlConnectionAddInput);
+const decodeUpdateInput = Schema.decodeUnknownSync(SourceControlConnectionUpdateInput);
+const isConnectionNotFoundError = Schema.is(SourceControlConnectionNotFoundError);
 const capabilities = {
   repositorySearch: true,
   repositoryCreate: true,
@@ -99,6 +102,7 @@ const makeFailureLayer = (input: {
   readonly initialCredentials?: ReadonlyMap<string, Uint8Array>;
   readonly failAdd?: boolean;
   readonly failRemove?: boolean;
+  readonly failReplace?: boolean;
 }) => {
   const connections = [...input.initialConnections];
   const credentials = new Map(input.initialCredentials);
@@ -113,7 +117,13 @@ const makeFailureLayer = (input: {
         : Effect.sync(() => {
             connections.push(connection);
           }),
-    replace: () => Effect.void,
+    replace: (connection) =>
+      input.failReplace
+        ? Effect.fail(persistenceFailure())
+        : Effect.sync(() => {
+            const index = connections.findIndex((candidate) => candidate.id === connection.id);
+            connections[index] = connection;
+          }),
     remove: (id) =>
       input.failRemove
         ? Effect.fail(persistenceFailure())
@@ -140,7 +150,7 @@ const makeFailureLayer = (input: {
     Layer.provide(Layer.succeed(SourceControlConnectionStore.SourceControlConnectionStore, store)),
     Layer.provide(Layer.succeed(ServerSecretStore.ServerSecretStore, secrets)),
   );
-  return { layer, credentials };
+  return { layer, connections, credentials };
 };
 
 it.layer(NodeServices.layer)("SourceControlConnectionService", (it) => {
@@ -203,8 +213,65 @@ it.layer(NodeServices.layer)("SourceControlConnectionService", (it) => {
       assert.isTrue(
         Option.isNone(yield* secretStore.get(`source-control-connection-${created.id}`)),
       );
+      const removed = yield* service.resolveById(created.id).pipe(Effect.flip);
+      assert.instanceOf(removed, SourceControlConnectionNotFoundError);
     }).pipe(Effect.provide(makeLayer())),
   );
+
+  it.effect("updates connection metadata with the stored credential and preserves identity", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlConnectionService;
+      const store = yield* SourceControlConnectionStore.SourceControlConnectionStore;
+      const created = yield* service.add(addInput("editable"));
+      const before = yield* store.get(created.id);
+
+      const updated = yield* service.update(
+        decodeUpdateInput({
+          id: created.id,
+          displayName: "Edited Forgejo",
+          baseUrl: "https://git.example.com/",
+          sshHost: "ssh.git.example.com",
+          sshPort: 2222,
+        }),
+      );
+      const after = yield* store.get(created.id);
+      const resolved = yield* service.resolveByRemoteUrl(
+        "ssh://git@ssh.git.example.com:2222/owner/repo.git",
+      );
+
+      assert.equal(updated.id, created.id);
+      assert.equal(updated.displayName, "Edited Forgejo");
+      assert.equal(updated.sshPort, 2222);
+      assert.equal(before.credentialRef, after.credentialRef);
+      assert.equal(resolved.token, "credential-editable");
+      assert.isFalse("credentialRef" in updated);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("leaves stored metadata unchanged when an update cannot be verified", () => {
+    const rejectedCredential = new TextEncoder().encode("rejected-sensitive-fixture");
+    const failure = makeFailureLayer({
+      initialConnections: [rollbackConnection],
+      initialCredentials: new Map([[rollbackCredentialRef, rejectedCredential]]),
+    });
+    return Effect.gen(function* () {
+      const service = yield* SourceControlConnectionService;
+      const error = yield* Effect.flip(
+        service.update(
+          decodeUpdateInput({
+            id: rollbackConnectionId,
+            displayName: "Should not persist",
+            baseUrl: "https://changed.example.com/",
+            sshPort: 2222,
+          }),
+        ),
+      );
+
+      assert.instanceOf(error, SourceControlConnectionAuthenticationError);
+      assert.equal(failure.connections[0]?.displayName, rollbackConnection.displayName);
+      assert.equal(failure.connections[0]?.sshPort, rollbackConnection.sshPort);
+    }).pipe(Effect.provide(failure.layer));
+  });
 
   it.effect("prefers the most specific HTTPS base path and retains custom SSH routing", () =>
     Effect.gen(function* () {
@@ -244,7 +311,7 @@ it.layer(NodeServices.layer)("SourceControlConnectionService", (it) => {
       const error = yield* service
         .resolveByRemoteUrl("https://forgejo-imposter.example.net/owner/repo.git")
         .pipe(Effect.flip);
-      assert.isTrue(Schema.is(SourceControlConnectionNotFoundError)(error));
+      assert.isTrue(isConnectionNotFoundError(error));
     }).pipe(Effect.provide(makeLayer())),
   );
 

@@ -8,9 +8,11 @@ import {
   SourceControlConnectionUrl,
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import {
   ForgejoHttpClient,
+  ForgejoRequestError,
   ForgejoResponseError,
   ForgejoUntrustedUrlError,
   layer,
@@ -24,6 +26,10 @@ const connection = {
   apiUrl: SourceControlConnectionUrl.make("https://forgejo.test/forge/api/v1"),
   token,
 };
+const isForgejoUntrustedUrlError = Schema.is(ForgejoUntrustedUrlError);
+const isForgejoResponseError = Schema.is(ForgejoResponseError);
+const isIncompatibleVersionError = Schema.is(SourceControlConnectionIncompatibleVersionError);
+const isAuthenticationError = Schema.is(SourceControlConnectionAuthenticationError);
 
 function makeLayer(handler: (request: HttpClientRequest.HttpClientRequest) => Response) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
@@ -38,7 +44,7 @@ function makeLayer(handler: (request: HttpClientRequest.HttpClientRequest) => Re
 }
 
 it.effect("sends Forgejo token auth only to the configured API origin and base path", () => {
-  const { execute, layer: testLayer } = makeLayer((request) =>
+  const { execute, layer: testLayer } = makeLayer(() =>
     Response.json({
       full_name: "owner/repo",
       html_url: "https://forgejo.test/forge/owner/repo",
@@ -81,8 +87,57 @@ it.effect("rejects a cross-origin redirect before forwarding credentials", () =>
       })
       .pipe(Effect.flip);
 
-    assert.isTrue(Schema.is(ForgejoUntrustedUrlError)(error));
+    assert.isTrue(isForgejoUntrustedUrlError(error));
     assert.equal(execute.mock.calls.length, 1);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("sanitizes transport failures without exposing their cause or token", () => {
+  const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
+    Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({
+          request,
+          cause: new Error(`connection refused for ${token}`),
+        }),
+      }),
+    ),
+  );
+  const testLayer = layer.pipe(
+    Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
+  );
+
+  return Effect.gen(function* () {
+    const client = yield* ForgejoHttpClient;
+    const error = yield* client
+      .requestJson({
+        connection,
+        operation: "verifyUser",
+        pathOrUrl: "user",
+        schema: schemas.repository,
+      })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(error, ForgejoRequestError);
+    assert.notInclude(error.message, token);
+    assert.notInclude(error.message, "connection refused");
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("reads a bounded Forgejo diff without treating truncation as invalid JSON", () => {
+  const { layer: testLayer } = makeLayer(() => new Response("12345678"));
+
+  return Effect.gen(function* () {
+    const client = yield* ForgejoHttpClient;
+    const response = yield* client.requestText({
+      connection,
+      operation: "getNativePullRequestDiff",
+      pathOrUrl: "repos/owner/repo/pulls/1.diff",
+      maxBytes: 4,
+    });
+
+    assert.equal(response.value, "1234");
+    assert.isTrue(response.truncated);
   }).pipe(Effect.provide(testLayer));
 });
 
@@ -115,8 +170,8 @@ it.effect(
           })
           .pipe(Effect.flip);
 
-        assert.isTrue(Schema.is(ForgejoResponseError)(error));
-        if (!Schema.is(ForgejoResponseError)(error)) return;
+        assert.isTrue(isForgejoResponseError(error));
+        if (!isForgejoResponseError(error)) return;
         assert.equal(error.status, responseStatus);
         assert.equal(error.responseBodyLength, sensitiveBody.length);
         assert.equal(error.requestId, `request-${responseStatus}`);
@@ -136,7 +191,7 @@ it.effect("verifies Forgejo 15 and 16 connections and rejects older major versio
       if (path.endsWith("/settings/api")) {
         return Response.json({ default_paging_num: 30, max_response_items: 50 });
       }
-      return Response.json({ login: "schrobo", full_name: "Schrobo" });
+      return Response.json({ login: "forge-user", full_name: "Forge User" });
     }).layer;
 
   return Effect.gen(function* () {
@@ -148,7 +203,7 @@ it.effect("verifies Forgejo 15 and 16 connections and rejects older major versio
         token,
       });
       assert.equal(verified.apiUrl, "https://forgejo.test/forge/api/v1");
-      assert.equal(verified.identity.login, "schrobo");
+      assert.equal(verified.identity.login, "forge-user");
       assert.equal(verified.serverVersion, version);
     }
 
@@ -158,7 +213,7 @@ it.effect("verifies Forgejo 15 and 16 connections and rejects older major versio
       baseUrl: connection.baseUrl,
       token,
     }).pipe(Effect.flip);
-    assert.isTrue(Schema.is(SourceControlConnectionIncompatibleVersionError)(incompatible));
+    assert.isTrue(isIncompatibleVersionError(incompatible));
 
     const authFailureLayer = makeLayer(() => new Response("denied", { status: 401 })).layer;
     const failingVerifier = yield* makeVerifier.pipe(Effect.provide(authFailureLayer));
@@ -167,6 +222,6 @@ it.effect("verifies Forgejo 15 and 16 connections and rejects older major versio
       baseUrl: connection.baseUrl,
       token,
     }).pipe(Effect.flip);
-    assert.isTrue(Schema.is(SourceControlConnectionAuthenticationError)(authentication));
+    assert.isTrue(isAuthenticationError(authentication));
   });
 });

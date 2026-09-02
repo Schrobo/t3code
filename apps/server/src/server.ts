@@ -327,6 +327,8 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
   Layer.provide(SourceControlProviderRegistryLayerLive),
   Layer.provide(SourceControlRateLimit.layer),
+  Layer.provide(SourceControlConnectionServiceLayerLive),
+  Layer.provide(GitVcsDriver.layer),
 );
 
 const GitManagerLayerLive = GitManager.layer.pipe(

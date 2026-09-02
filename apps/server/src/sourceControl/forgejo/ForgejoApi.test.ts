@@ -24,7 +24,7 @@ const connection = {
   apiUrl: SourceControlConnectionUrl.make("https://forgejo.test/forge/api/v1"),
   sshHost: SourceControlConnectionSshHost.make("ssh.forgejo.test"),
   sshPort: 2222,
-  identity: { login: "schrobo" },
+  identity: { login: "forge-user" },
   serverVersion: "16.0.3",
   capabilities: {
     repositorySearch: true,
@@ -88,6 +88,9 @@ function makeLayer(
   const fetchRemoteBranch = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"]>(
     () => Effect.void,
   );
+  const fetchRemoteTrackingBranch = vi.fn<
+    GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]
+  >(() => Effect.void);
   const switchRef = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["switchRef"]>((input) =>
     Effect.succeed({ refName: input.refName }),
   );
@@ -100,9 +103,7 @@ function makeLayer(
       Effect.succeed([]),
     ),
     fetchRemoteBranch,
-    fetchRemoteTrackingBranch: vi.fn<
-      GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]
-    >(() => Effect.void),
+    fetchRemoteTrackingBranch,
     setBranchUpstream: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"]>(
       () => Effect.void,
     ),
@@ -112,7 +113,7 @@ function makeLayer(
   return {
     execute,
     git,
-    gitSpies: { ensureRemote, fetchRemoteBranch, switchRef },
+    gitSpies: { ensureRemote, fetchRemoteBranch, fetchRemoteTrackingBranch, switchRef },
     layer: layer.pipe(
       Layer.provide(connectionService),
       Layer.provide(httpLayer),
@@ -190,11 +191,73 @@ it.effect("checks out a cross-repository Forgejo pull request through GitVcsDriv
   }).pipe(Effect.provide(testLayer));
 });
 
+it.effect("accepts the full Forgejo pull request URL used by the Fix workflow", () => {
+  const requestedPaths: string[] = [];
+  const { layer: testLayer } = makeLayer((request) => {
+    requestedPaths.push(new URL(request.url).pathname);
+    return Response.json(pullRequest(2, "test/t3-forgejo-pr"));
+  });
+
+  return Effect.gen(function* () {
+    const forgejo = yield* ForgejoApi;
+    const result = yield* forgejo.getPullRequest({
+      cwd: "/repo",
+      connectionId,
+      context: {
+        provider: { kind: "forgejo", name: "Forgejo", baseUrl: connection.baseUrl },
+        connectionId,
+        remoteName: "origin",
+        remoteUrl: "ssh://git@ssh.forgejo.test:2222/owner/repo.git",
+      },
+      reference: "https://forgejo.test/forge/owner/repo/pulls/2",
+    });
+
+    assert.equal(result.number, 2);
+    assert.match(requestedPaths[0] ?? "", /\/repos\/owner\/repo\/pulls\/2$/u);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("does not force-materialize an already checked-out local PR branch", () => {
+  const { gitSpies, layer: testLayer } = makeLayer(
+    () => Response.json(pullRequest(2, "test/t3-forgejo-pr")),
+    {
+      listLocalBranchNames: () => Effect.succeed(["main", "test/t3-forgejo-pr"]),
+    },
+  );
+
+  return Effect.gen(function* () {
+    const forgejo = yield* ForgejoApi;
+    yield* forgejo.checkoutPullRequest({
+      cwd: "/repo",
+      connectionId,
+      context: {
+        provider: { kind: "forgejo", name: "Forgejo", baseUrl: connection.baseUrl },
+        connectionId,
+        remoteName: "origin",
+        remoteUrl: "ssh://git@ssh.forgejo.test:2222/owner/repo.git",
+      },
+      reference: "https://forgejo.test/forge/owner/repo/pulls/2",
+      force: true,
+    });
+
+    assert.equal(gitSpies.fetchRemoteBranch.mock.calls.length, 0);
+    assert.deepStrictEqual(gitSpies.fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "origin",
+      remoteBranch: "test/t3-forgejo-pr",
+    });
+    assert.deepStrictEqual(gitSpies.switchRef.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      refName: "test/t3-forgejo-pr",
+    });
+  }).pipe(Effect.provide(testLayer));
+});
+
 it.effect("searches repositories within the selected Forgejo connection", () => {
   const { execute, layer: testLayer } = makeLayer((request) => {
     const page = Number(requestParameter(request, "page"));
     return Response.json(
-      page === 1 ? { ok: true, data: [repository("schrobo/t3code")] } : { ok: true, data: [] },
+      page === 1 ? { ok: true, data: [repository("forge-user/t3code")] } : { ok: true, data: [] },
     );
   });
 
@@ -207,7 +270,7 @@ it.effect("searches repositories within the selected Forgejo connection", () => 
     });
 
     assert.equal(results[0]?.connectionId, connectionId);
-    assert.equal(results[0]?.nameWithOwner, "schrobo/t3code");
+    assert.equal(results[0]?.nameWithOwner, "forge-user/t3code");
     assert.equal(requestParameter(execute.mock.calls[0]![0], "q"), "t3code");
   }).pipe(Effect.provide(testLayer));
 });
@@ -368,7 +431,9 @@ it.effect(
       const path = new URL(request.url).pathname;
       paths.push(path);
       return Response.json(
-        path.endsWith("/user/repos") ? repository("schrobo/personal") : repository("ongrow/team"),
+        path.endsWith("/user/repos")
+          ? repository("forge-user/personal")
+          : repository("forge-team/team"),
         { status: 201 },
       );
     });
@@ -378,19 +443,19 @@ it.effect(
       yield* forgejo.createRepository({
         cwd: "/repo",
         connectionId,
-        repository: "schrobo/personal",
+        repository: "forge-user/personal",
         visibility: "private",
       });
       yield* forgejo.createRepository({
         cwd: "/repo",
         connectionId,
-        repository: "ongrow/team",
+        repository: "forge-team/team",
         visibility: "public",
       });
 
       assert.deepStrictEqual(paths, [
         "/forge/api/v1/user/repos",
-        "/forge/api/v1/orgs/ongrow/repos",
+        "/forge/api/v1/orgs/forge-team/repos",
       ]);
     }).pipe(Effect.provide(testLayer));
   },

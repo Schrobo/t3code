@@ -6,6 +6,7 @@ import {
   SourceControlConnection,
   SourceControlConnectionAddInput,
   SourceControlConnectionId,
+  SourceControlConnectionUpdateInput,
   SourceControlConnectionUrl,
 } from "./sourceControl.ts";
 
@@ -13,6 +14,7 @@ const decodeUrl = Schema.decodeUnknownSync(SourceControlConnectionUrl);
 const decodeId = Schema.decodeUnknownSync(SourceControlConnectionId);
 const decodeAddInput = Schema.decodeUnknownSync(SourceControlConnectionAddInput);
 const decodeConnection = Schema.decodeUnknownSync(SourceControlConnection);
+const decodeUpdateInput = Schema.decodeUnknownSync(SourceControlConnectionUpdateInput);
 
 describe("SourceControlConnectionUrl", () => {
   it.each([
@@ -48,6 +50,20 @@ describe("SourceControlConnection contracts", () => {
     });
 
     expect(input.token).toBe("sensitive-fixture-value");
+  });
+
+  it("updates connection metadata without transporting credentials", () => {
+    const input = decodeUpdateInput({
+      id: "00000000-0000-4000-8000-000000000001",
+      displayName: "Updated Forgejo",
+      baseUrl: "https://git.example.com/",
+      sshHost: "ssh.git.example.com",
+      sshPort: 2222,
+      token: "must-not-cross-the-rpc-boundary",
+    });
+
+    expect(input.sshPort).toBe(2222);
+    expect("token" in input).toBe(false);
   });
 
   it("does not transport credentials or credential references in public connections", () => {

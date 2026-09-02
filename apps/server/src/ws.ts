@@ -2023,6 +2023,14 @@ const makeWsRpcLayer = (
             sourceControlConnections.add(input).pipe(Effect.map((connection) => ({ connection }))),
             { "rpc.aggregate": "source-control-connections" },
           ),
+        [WS_METHODS.sourceControlConnectionsUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsUpdate,
+            sourceControlConnections
+              .update(input)
+              .pipe(Effect.map((connection) => ({ connection }))),
+            { "rpc.aggregate": "source-control-connections" },
+          ),
         [WS_METHODS.sourceControlConnectionsVerify]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlConnectionsVerify,
