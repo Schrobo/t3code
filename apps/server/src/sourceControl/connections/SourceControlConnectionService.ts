@@ -7,6 +7,7 @@ import {
   SourceControlConnectionNotFoundError,
   SourceControlConnectionPersistenceError,
   type SourceControlConnectionReplaceCredentialInput,
+  type SourceControlConnectionUpdateInput,
   type SourceControlConnectionUrl,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -53,6 +54,9 @@ export class SourceControlConnectionService extends Context.Service<
     ) => Effect.Effect<SourceControlConnection, SourceControlConnectionError>;
     readonly verify: (
       id: SourceControlConnectionId,
+    ) => Effect.Effect<SourceControlConnection, SourceControlConnectionError>;
+    readonly update: (
+      input: SourceControlConnectionUpdateInput,
     ) => Effect.Effect<SourceControlConnection, SourceControlConnectionError>;
     readonly replaceCredential: (
       input: SourceControlConnectionReplaceCredentialInput,
@@ -182,6 +186,33 @@ export const make = Effect.gen(function* () {
         const stored = yield* store.get(id);
         const token = yield* readCredential(stored);
         const updated = yield* verifyStored(stored, token);
+        yield* store.replace(updated);
+        return toPublicConnection(updated);
+      }),
+    );
+
+  const update = (input: SourceControlConnectionUpdateInput) =>
+    transactionMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const stored = yield* store.get(input.id);
+        const token = yield* readCredential(stored);
+        const verified = yield* verifiers.verify({
+          provider: stored.provider,
+          connectionId: stored.id,
+          baseUrl: input.baseUrl,
+          ...(input.apiUrl === undefined ? {} : { apiUrl: input.apiUrl }),
+          ...(input.sshHost === undefined ? {} : { sshHost: input.sshHost }),
+          ...(input.sshPort === undefined ? {} : { sshPort: input.sshPort }),
+          token,
+        });
+        const updated: StoredSourceControlConnection = {
+          ...stored,
+          displayName: input.displayName,
+          ...verified,
+          ...(input.sshHost === undefined ? {} : { sshHost: input.sshHost }),
+          ...(input.sshPort === undefined ? {} : { sshPort: input.sshPort }),
+          verifiedAt: yield* DateTime.now,
+        };
         yield* store.replace(updated);
         return toPublicConnection(updated);
       }),
@@ -331,6 +362,7 @@ export const make = Effect.gen(function* () {
   return SourceControlConnectionService.of({
     list,
     add,
+    update,
     verify,
     replaceCredential,
     remove,

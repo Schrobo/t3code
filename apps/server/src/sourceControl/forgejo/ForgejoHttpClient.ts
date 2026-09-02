@@ -30,6 +30,7 @@ import {
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const SUPPORTED_MAJOR_VERSIONS = new Set([15, 16]);
+const isIncompatibleVersionError = Schema.is(SourceControlConnectionIncompatibleVersionError);
 
 const ForgejoOperation = Schema.Literals([
   "verifyVersion",
@@ -42,6 +43,13 @@ const ForgejoOperation = Schema.Literals([
   "findPullRequest",
   "getPullRequest",
   "createPullRequest",
+  "listNativePullRequests",
+  "getNativePullRequest",
+  "getNativePullRequestDiff",
+  "listNativePullRequestComments",
+  "listNativePullRequestReviews",
+  "listNativePullRequestCommits",
+  "listNativeCommitStatuses",
 ]);
 export type ForgejoOperation = typeof ForgejoOperation.Type;
 
@@ -109,6 +117,12 @@ export interface ForgejoJsonResponse<A> {
   readonly headers: Readonly<Record<string, string | undefined>>;
 }
 
+export interface ForgejoTextResponse {
+  readonly value: string;
+  readonly truncated: boolean;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+}
+
 export class ForgejoHttpClient extends Context.Service<
   ForgejoHttpClient,
   {
@@ -120,6 +134,12 @@ export class ForgejoHttpClient extends Context.Service<
       readonly body?: unknown;
       readonly schema: S;
     }) => Effect.Effect<ForgejoJsonResponse<S["Type"]>, ForgejoHttpError, S["DecodingServices"]>;
+    readonly requestText: (input: {
+      readonly connection: ForgejoRequestConnection;
+      readonly operation: ForgejoOperation;
+      readonly pathOrUrl: string;
+      readonly maxBytes?: number;
+    }) => Effect.Effect<ForgejoTextResponse, ForgejoHttpError>;
   }
 >()("t3/sourceControl/forgejo/ForgejoHttpClient") {}
 
@@ -223,6 +243,7 @@ export const make = Effect.gen(function* () {
               responseBodyLength: collected.bytes,
             });
           }
+          // oxlint-disable-next-line t3code/no-inline-schema-compile -- The response schema is selected by each request.
           const value = yield* Schema.decodeEffect(Schema.fromJsonString(input.schema))(
             collected.text,
           ).pipe(
@@ -240,7 +261,51 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return ForgejoHttpClient.of({ requestJson });
+  const requestText: ForgejoHttpClient["Service"]["requestText"] = (input) =>
+    send({
+      connection: input.connection,
+      operation: input.operation,
+      pathOrUrl: input.pathOrUrl,
+      method: "GET",
+      redirects: 0,
+    }).pipe(
+      Effect.flatMap((response) =>
+        Effect.gen(function* () {
+          const collected = yield* collectUint8StreamText({
+            stream: response.stream,
+            maxBytes: input.maxBytes ?? MAX_RESPONSE_BYTES,
+          }).pipe(Effect.mapError(() => new ForgejoRequestError({ operation: input.operation })));
+          if (response.status < 200 || response.status >= 300) {
+            const now = yield* Clock.currentTimeMillis;
+            return yield* new ForgejoResponseError({
+              operation: input.operation,
+              status: response.status,
+              responseBodyLength: collected.bytes,
+              ...(optionalTrimmed(response.headers["x-request-id"])
+                ? { requestId: optionalTrimmed(response.headers["x-request-id"])! }
+                : {}),
+              ...(retryAtFromHeader(response.headers["retry-after"], now) === undefined
+                ? {}
+                : { retryAt: retryAtFromHeader(response.headers["retry-after"], now)! }),
+            });
+          }
+          if (collected.invalidUtf8) {
+            return yield* new ForgejoResponseDecodeError({
+              operation: input.operation,
+              status: response.status,
+              responseBodyLength: collected.bytes,
+            });
+          }
+          return {
+            value: collected.text,
+            truncated: collected.truncated,
+            headers: response.headers,
+          };
+        }),
+      ),
+    );
+
+  return ForgejoHttpClient.of({ requestJson, requestText });
 });
 
 export const layer = Layer.effect(ForgejoHttpClient, make);
@@ -313,7 +378,7 @@ export const makeVerifier = Effect.gen(function* () {
       };
     }).pipe(
       Effect.mapError((error) => {
-        if (Schema.is(SourceControlConnectionIncompatibleVersionError)(error)) return error;
+        if (isIncompatibleVersionError(error)) return error;
         return new SourceControlConnectionAuthenticationError({
           provider: "forgejo",
           ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),

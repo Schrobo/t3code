@@ -204,6 +204,7 @@ import {
   SourceControlConnectionRemoveInput,
   SourceControlConnectionRemoveResult,
   SourceControlConnectionReplaceCredentialInput,
+  SourceControlConnectionUpdateInput,
   SourceControlConnectionVerifyInput,
   SourceControlConnectionVerifyResult,
   SourceControlCloneRepositoryInput,
@@ -336,6 +337,7 @@ export const WS_METHODS = {
   sourceControlPublishRepository: "sourceControl.publishRepository",
   sourceControlConnectionsList: "sourceControl.connections.list",
   sourceControlConnectionsAdd: "sourceControl.connections.add",
+  sourceControlConnectionsUpdate: "sourceControl.connections.update",
   sourceControlConnectionsVerify: "sourceControl.connections.verify",
   sourceControlConnectionsReplaceCredential: "sourceControl.connections.replaceCredential",
   sourceControlConnectionsRemove: "sourceControl.connections.remove",
@@ -687,6 +689,15 @@ export const WsSourceControlConnectionsAddRpc = Rpc.make(WS_METHODS.sourceContro
   success: SourceControlConnectionAddResult,
   error: SourceControlConnectionRpcError,
 });
+
+export const WsSourceControlConnectionsUpdateRpc = Rpc.make(
+  WS_METHODS.sourceControlConnectionsUpdate,
+  {
+    payload: SourceControlConnectionUpdateInput,
+    success: SourceControlConnectionVerifyResult,
+    error: SourceControlConnectionRpcError,
+  },
+);
 
 export const WsSourceControlConnectionsVerifyRpc = Rpc.make(
   WS_METHODS.sourceControlConnectionsVerify,
@@ -1153,6 +1164,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlPublishRepositoryRpc,
   WsSourceControlConnectionsListRpc,
   WsSourceControlConnectionsAddRpc,
+  WsSourceControlConnectionsUpdateRpc,
   WsSourceControlConnectionsVerifyRpc,
   WsSourceControlConnectionsReplaceCredentialRpc,
   WsSourceControlConnectionsRemoveRpc,

@@ -122,6 +122,16 @@ export const SourceControlConnectionAddInput = Schema.Struct({
 });
 export type SourceControlConnectionAddInput = typeof SourceControlConnectionAddInput.Type;
 
+export const SourceControlConnectionUpdateInput = Schema.Struct({
+  id: SourceControlConnectionId,
+  displayName: TrimmedNonEmptyString,
+  baseUrl: SourceControlConnectionUrl,
+  apiUrl: Schema.optional(SourceControlConnectionUrl),
+  sshHost: Schema.optional(SourceControlConnectionSshHost),
+  sshPort: Schema.optional(PortSchema),
+});
+export type SourceControlConnectionUpdateInput = typeof SourceControlConnectionUpdateInput.Type;
+
 export const SourceControlConnectionReplaceCredentialInput = Schema.Struct({
   id: SourceControlConnectionId,
   token: SourceControlConnectionToken,

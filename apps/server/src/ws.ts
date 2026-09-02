@@ -33,7 +33,6 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
-  type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
@@ -2008,6 +2007,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.sourceControlConnectionsAdd,
             sourceControlConnections.add(input).pipe(Effect.map((connection) => ({ connection }))),
+            { "rpc.aggregate": "source-control-connections" },
+          ),
+        [WS_METHODS.sourceControlConnectionsUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlConnectionsUpdate,
+            sourceControlConnections
+              .update(input)
+              .pipe(Effect.map((connection) => ({ connection }))),
             { "rpc.aggregate": "source-control-connections" },
           ),
         [WS_METHODS.sourceControlConnectionsVerify]: (input) =>

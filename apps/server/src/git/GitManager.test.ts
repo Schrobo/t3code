@@ -5116,16 +5116,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const errorMessage = yield* preparePullRequestThread(manager, {
+      const error = yield* preparePullRequestThread(manager, {
         cwd: repoDir,
         reference: "79",
         mode: "worktree",
-      }).pipe(
-        Effect.flip,
-        Effect.map((error) => error.message),
-      );
+      }).pipe(Effect.flip);
 
-      expect(errorMessage).toContain("already checked out in the main repo");
+      expect(error.message).toContain("already checked out in the main repo");
+      expect(error).toMatchObject({
+        _tag: "GitManagerError",
+        reason: "pull-request-branch-checked-out-in-main",
+      });
     }),
   );
 

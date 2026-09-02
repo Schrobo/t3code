@@ -43,6 +43,9 @@ import {
   type NormalizedForgejoPullRequest,
 } from "./ForgejoSchemas.ts";
 
+const isForgejoResponseError = Schema.is(ForgejoResponseError);
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+
 interface ForgejoRepositoryLocator {
   readonly owner: string;
   readonly repository: string;
@@ -88,6 +91,14 @@ function parseRepository(value: string): ForgejoRepositoryLocator | null {
 
 function repositoryPath(locator: ForgejoRepositoryLocator): string {
   return `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.repository)}`;
+}
+
+function pullRequestNumber(reference: string): number | null {
+  const trimmed = reference.trim();
+  const direct = /^#?(\d+)$/u.exec(trimmed)?.[1];
+  const fromUrl = /\/pulls\/(\d+)(?:[/?#]|$)/u.exec(trimmed)?.[1];
+  const parsed = Number(direct ?? fromUrl);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function cloneUrls(
@@ -249,8 +260,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const resolved = yield* resolveConnection(input);
       const locator = yield* resolveRepository(input);
-      const number = Number.parseInt(input.reference.replace(/^#/u, ""), 10);
-      if (!Number.isSafeInteger(number) || number < 1) {
+      const number = pullRequestNumber(input.reference);
+      if (number === null) {
         return yield* safeError({
           operation: "getPullRequest",
           cwd: input.cwd,
@@ -322,7 +333,7 @@ export const make = Effect.gen(function* () {
       });
     }).pipe(
       Effect.catch((error) =>
-        Schema.is(ForgejoResponseError)(error) && error.status === 404
+        isForgejoResponseError(error) && error.status === 404
           ? Effect.succeed(null)
           : Effect.fail(error),
       ),
@@ -336,7 +347,7 @@ export const make = Effect.gen(function* () {
     readonly reference?: string;
   }) =>
     Effect.mapError((cause: unknown) =>
-      Schema.is(SourceControlProviderError)(cause) ? cause : safeError({ ...input, cause }),
+      isSourceControlProviderError(cause) ? cause : safeError({ ...input, cause }),
     );
 
   return ForgejoApi.of({
@@ -567,7 +578,12 @@ export const make = Effect.gen(function* () {
           ? `t3code/pr-${raw.number}/${sanitizeBranchFragment(raw.head.ref)}`
           : raw.head.ref;
         const localBranches = yield* git.listLocalBranchNames(input.cwd);
-        if (input.force === true || !localBranches.includes(localBranch)) {
+        // `git branch --force` cannot move a branch that is checked out in this worktree. Local
+        // handoffs deliberately reach this path with `force: true` when the PR branch is already
+        // the current branch, so an existing branch must refresh its remote-tracking ref instead
+        // of being materialized again. The later switch is then either a no-op (already current)
+        // or the normal checkout of that existing local branch.
+        if (!localBranches.includes(localBranch)) {
           yield* git.fetchRemoteBranch({
             cwd: input.cwd,
             remoteName: checkoutRemote,

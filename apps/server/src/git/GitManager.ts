@@ -2287,6 +2287,7 @@ export const make = Effect.gen(function* () {
         return yield* new GitManagerError({
           operation: "preparePullRequestThread",
           cwd: input.cwd,
+          reason: "pull-request-branch-checked-out-in-main",
           detail:
             "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
         });
@@ -2315,6 +2316,7 @@ export const make = Effect.gen(function* () {
         return yield* new GitManagerError({
           operation: "preparePullRequestThread",
           cwd: input.cwd,
+          reason: "pull-request-branch-checked-out-in-main",
           detail:
             "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
         });

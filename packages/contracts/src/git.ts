@@ -369,6 +369,7 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
   operation: Schema.String,
   cwd: Schema.String,
   detail: Schema.String,
+  reason: Schema.optional(Schema.Literal("pull-request-branch-checked-out-in-main")),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {

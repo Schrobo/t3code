@@ -139,7 +139,7 @@ it.effect("routes private Forgejo remotes through an exact stored connection mat
       apiUrl: SourceControlConnectionUrl.make("https://scm.example.test/forge/api/v1"),
       sshHost: SourceControlConnectionSshHost.make("ssh.scm.example.test"),
       sshPort: 2222,
-      identity: { login: "schrobo" },
+      identity: { login: "forge-user" },
       serverVersion: "16.0.3",
       capabilities: {
         repositorySearch: true,

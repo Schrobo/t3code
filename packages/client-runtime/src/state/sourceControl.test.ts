@@ -205,14 +205,24 @@ describe("source control environment atoms", () => {
         };
         const calls = new Array<string>();
         let receivedToken: string | null = null;
+        let receivedReplacementToken: string | null = null;
         const client = {
           [WS_METHODS.sourceControlConnectionsAdd]: (input: { token: string }) => {
             calls.push("add");
             receivedToken = input.token;
             return Effect.succeed({ connection: FORGEJO_CONNECTION });
           },
+          [WS_METHODS.sourceControlConnectionsUpdate]: () => {
+            calls.push("update");
+            return Effect.succeed({ connection: FORGEJO_CONNECTION });
+          },
           [WS_METHODS.sourceControlConnectionsVerify]: () => {
             calls.push("verify");
+            return Effect.succeed({ connection: FORGEJO_CONNECTION });
+          },
+          [WS_METHODS.sourceControlConnectionsReplaceCredential]: (input: { token: string }) => {
+            calls.push("replace");
+            receivedReplacementToken = input.token;
             return Effect.succeed({ connection: FORGEJO_CONNECTION });
           },
           [WS_METHODS.sourceControlConnectionsRemove]: () => {
@@ -273,9 +283,27 @@ describe("source control environment atoms", () => {
           }),
         );
         yield* Effect.promise(() =>
+          atoms.updateConnection.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: {
+              id: FORGEJO_CONNECTION.id,
+              displayName: "Updated Forgejo",
+              baseUrl: FORGEJO_CONNECTION.baseUrl,
+              sshPort: 2222,
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
           atoms.verifyConnection.run(registry, {
             environmentId: TARGET.environmentId,
             input: { id: FORGEJO_CONNECTION.id },
+          }),
+        );
+        const replacementToken = "replacement-fixture-value";
+        yield* Effect.promise(() =>
+          atoms.replaceConnectionCredential.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { id: FORGEJO_CONNECTION.id, token: replacementToken },
           }),
         );
         yield* Effect.promise(() =>
@@ -286,7 +314,8 @@ describe("source control environment atoms", () => {
         );
 
         expect(receivedToken).toBe(token);
-        expect(calls).toEqual(["add", "verify", "remove"]);
+        expect(receivedReplacementToken).toBe(replacementToken);
+        expect(calls).toEqual(["add", "update", "verify", "replace", "remove"]);
         expect(AsyncResult.isSuccess(added)).toBe(true);
         if (AsyncResult.isSuccess(added)) {
           expect("token" in added.value.connection).toBe(false);

@@ -52,3 +52,50 @@ it.effect("follows RFC 8288 next links instead of assuming a fixed Forgejo page 
     assert.match(requestedUrls[1] ?? "", /page=7/u);
   }),
 );
+
+it.effect("paginates API-relative paths used by pull request details", () =>
+  Effect.gen(function* () {
+    const requestedUrls: string[] = [];
+    const items = yield* paginateForgejo({
+      initialUrl: "repos/owner/repo/issues/51/comments?limit=50",
+      fetchPage: (url) =>
+        Effect.sync(() => {
+          requestedUrls.push(url);
+          const page = Number(
+            new URL(url, "https://forgejo.test/api/v1/").searchParams.get("page"),
+          );
+          return {
+            items: page < 2 ? [1] : [],
+            headers: {},
+          };
+        }),
+    });
+
+    assert.deepStrictEqual(items, [1]);
+    assert.deepStrictEqual(requestedUrls, [
+      "repos/owner/repo/issues/51/comments?limit=50",
+      "repos/owner/repo/issues/51/comments?limit=50&page=2",
+    ]);
+  }),
+);
+
+it.effect("resolves relative next links from API-relative paths", () =>
+  Effect.gen(function* () {
+    const requestedUrls: string[] = [];
+    yield* paginateForgejo({
+      initialUrl: "repos/owner/repo/pulls/51/commits?limit=50&page=1",
+      fetchPage: (url) =>
+        Effect.sync(() => {
+          requestedUrls.push(url);
+          return requestedUrls.length === 1
+            ? { items: [1], headers: { link: '<?limit=50&page=2>; rel="next"' } }
+            : { items: [], headers: {} };
+        }),
+    });
+
+    assert.deepStrictEqual(requestedUrls, [
+      "repos/owner/repo/pulls/51/commits?limit=50&page=1",
+      "repos/owner/repo/pulls/51/commits?limit=50&page=2",
+    ]);
+  }),
+);

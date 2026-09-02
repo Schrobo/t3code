@@ -80,6 +80,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.sourceControlPublishRepository]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlConnectionsList]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlConnectionsAdd]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sourceControlConnectionsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlConnectionsVerify]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlConnectionsReplaceCredential]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlConnectionsRemove]: AuthOrchestrationOperateScope,

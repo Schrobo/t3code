@@ -1,4 +1,4 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
@@ -26,6 +26,14 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import {
   Empty,
   EmptyContent,
@@ -507,6 +515,8 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
+  const [addConnectionPickerOpen, setAddConnectionPickerOpen] = useState(false);
+  const [forgejoAddOpen, setForgejoAddOpen] = useState(false);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const fallbackEnvironment =
@@ -549,17 +559,30 @@ export function SourceControlSettingsPanel() {
       <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
     </Tooltip>
   );
+  const providerHeaderAction = (
+    <div className="flex items-center gap-1.5">
+      <Button
+        size="compact"
+        variant="outline"
+        onClick={() => setAddConnectionPickerOpen(true)}
+        disabled={environmentId === null}
+      >
+        <PlusIcon aria-hidden />
+        Add connection
+      </Button>
+      {!hasVersionControlSystems ? scanButton : null}
+    </div>
+  );
 
   return (
     <SettingsPageContainer>
       <SharedSettingsMismatchAlert />
-      <ForgejoConnectionsSettings environmentId={environmentId} />
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
           <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
-      ) : hasDiscoveryItems ? (
+      ) : (
         <>
           {hasVersionControlSystems ? (
             <SettingsSection
@@ -576,26 +599,62 @@ export function SourceControlSettingsPanel() {
               ))}
             </SettingsSection>
           ) : null}
-
-          {result.sourceControlProviders.length > 0 ? (
-            <SettingsSection
-              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title="Source Control Providers"
-              headerAction={hasVersionControlSystems ? null : scanButton}
-            >
-              {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
-              ))}
-            </SettingsSection>
+          {!hasDiscoveryItems ? (
+            <EmptySourceControlDiscovery
+              error={discovery.error}
+              isPending={discovery.isPending}
+              onScan={handleScan}
+            />
           ) : null}
+          <SettingsSection
+            id={
+              !hasVersionControlSystems && hasDiscoveryItems
+                ? searchableSetting("source-control").id
+                : undefined
+            }
+            title="Source Control Providers"
+            headerAction={providerHeaderAction}
+          >
+            {result.sourceControlProviders.map((item) => (
+              <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+            ))}
+            <ForgejoConnectionsSettings
+              environmentId={environmentId}
+              addOpen={forgejoAddOpen}
+              onAddOpenChange={setForgejoAddOpen}
+            />
+          </SettingsSection>
         </>
-      ) : (
-        <EmptySourceControlDiscovery
-          error={discovery.error}
-          isPending={discovery.isPending}
-          onScan={handleScan}
-        />
       )}
+
+      <Dialog open={addConnectionPickerOpen} onOpenChange={setAddConnectionPickerOpen}>
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Add source control connection</DialogTitle>
+            <DialogDescription>
+              Choose the service that hosts the repositories for this server environment.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <Button
+              variant="ghost-muted"
+              className="min-h-16 w-full justify-start gap-3 px-3 py-3 text-start"
+              onClick={() => {
+                setAddConnectionPickerOpen(false);
+                setForgejoAddOpen(true);
+              }}
+            >
+              <ForgejoIcon className="size-5 shrink-0" aria-hidden />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">Forgejo</span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  Connect a Forgejo instance with a personal access token.
+                </span>
+              </span>
+            </Button>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
 
       {/* Its rows are serverScoped: without a primary they render inert with
           an explanation, which beats disappearing. */}

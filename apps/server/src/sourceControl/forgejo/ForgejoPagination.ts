@@ -30,6 +30,36 @@ function linkTarget(linkHeader: string | undefined, relation: string): string | 
   return null;
 }
 
+const PAGINATION_BASE_URL = "https://forgejo-pagination.invalid/";
+
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    return new URL(value).origin.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function resolveNextLink(current: string, linked: string): string {
+  if (isAbsoluteUrl(linked)) return linked;
+  if (isAbsoluteUrl(current)) return new URL(linked, current).toString();
+
+  const resolved = new URL(linked, new URL(current, PAGINATION_BASE_URL));
+  if (resolved.origin !== new URL(PAGINATION_BASE_URL).origin) return resolved.toString();
+  const relative = `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  return current.startsWith("/") ? relative : relative.replace(/^\//u, "");
+}
+
+function incrementPage(url: string): string {
+  const absolute = isAbsoluteUrl(url);
+  const parsed = new URL(url, PAGINATION_BASE_URL);
+  const currentPage = Number.parseInt(parsed.searchParams.get("page") ?? "1", 10);
+  parsed.searchParams.set("page", String(Number.isFinite(currentPage) ? currentPage + 1 : 2));
+  if (absolute) return parsed.toString();
+  const relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  return url.startsWith("/") ? relative : relative.replace(/^\//u, "");
+}
+
 export function paginateForgejo<A, E>(input: {
   readonly initialUrl: string;
   readonly resultLimit?: number;
@@ -60,12 +90,9 @@ export function paginateForgejo<A, E>(input: {
 
       const linked = linkTarget(result.headers.link, "next");
       if (linked !== null) {
-        url = new URL(linked, url).toString();
+        url = resolveNextLink(url, linked);
       } else {
-        const next = new URL(url);
-        const currentPage = Number.parseInt(next.searchParams.get("page") ?? "1", 10);
-        next.searchParams.set("page", String(Number.isFinite(currentPage) ? currentPage + 1 : 2));
-        url = next.toString();
+        url = incrementPage(url);
       }
     }
 

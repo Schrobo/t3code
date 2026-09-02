@@ -120,6 +120,8 @@ export function PullRequestStateGlyph({
 
 const CHECK_STATUS_PRESENTATION = {
   pending: { label: "Running", Icon: LoaderIcon, toneClassName: "animate-spin text-amber-500" },
+  queued: { label: "Waiting", Icon: CircleDashedIcon, toneClassName: "text-amber-500" },
+  blocked: { label: "Blocked", Icon: CircleDashedIcon, toneClassName: "text-amber-500" },
   success: {
     label: "Passed",
     Icon: CircleCheckIcon,
@@ -187,10 +189,11 @@ export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const statuses = checks.map((check) => check.status);
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("queued") || statuses.has("blocked"))
+    return "pending";
+  return statuses.has("success") ? "passing" : null;
 }
 
 /**
@@ -438,9 +441,13 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
-  const pending = checks.filter((check) => check.status === "pending").length;
+  const running = checks.filter((check) => check.status === "pending").length;
+  const waiting = checks.filter(
+    (check) => check.status === "queued" || check.status === "blocked",
+  ).length;
   const passed = checks.filter((check) => check.status === "success").length;
   if (failed > 0) return `${failed} of ${checks.length} failing`;
-  if (pending > 0) return `${pending} of ${checks.length} running`;
+  if (running > 0) return `${running} of ${checks.length} running`;
+  if (waiting > 0) return `${waiting} of ${checks.length} pending`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
 }

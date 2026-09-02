@@ -1,9 +1,9 @@
-import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops" | "forgejo";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -14,6 +14,31 @@ export function SourceControlIcon(props: {
   const size = props.size ?? 18;
 
   switch (props.kind) {
+    // Forgejo logo by Caesar Schinas, CC BY-SA 4.0, adapted to `currentColor`.
+    case "forgejo":
+      return (
+        <ThemedSvg
+          width={size}
+          height={size}
+          viewBox="0 0 212 212"
+          color={props.color}
+          colorClassName={props.colorClassName}
+          fill="none"
+        >
+          <G
+            transform="translate(6 6)"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <Path d="M58 168V70a50 50 0 0 1 50-50h20" strokeWidth={15} />
+            <Path d="M58 168v-30a50 50 0 0 1 50-50h20" strokeWidth={15} />
+            <Circle cx={142} cy={20} r={18} strokeWidth={15} />
+            <Circle cx={142} cy={88} r={18} strokeWidth={15} />
+            <Circle cx={58} cy={180} r={18} strokeWidth={15} />
+          </G>
+        </ThemedSvg>
+      );
     case "github":
       return (
         <ThemedSvg
